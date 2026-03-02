@@ -18,6 +18,15 @@ import sys
 import time
 
 
+def _session_exists(session_name: str) -> bool:
+    """Return True while the tmux session is still alive."""
+    result = subprocess.run(
+        ["tmux", "has-session", "-t", session_name],
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
 def _check_tmux():
     """Verify tmux is installed, exit with helpful message if not."""
     if shutil.which("tmux"):
@@ -66,21 +75,42 @@ def get_activity_checker(session_name):
     return check
 
 
-def run_agent(command, extra_args, cwd, env, queue_file, agent, no_restart, start_watcher, strip_env=None, pid_holder=None):
+def run_agent(
+    command,
+    extra_args,
+    cwd,
+    env,
+    queue_file,
+    agent,
+    no_restart,
+    start_watcher,
+    strip_env=None,
+    pid_holder=None,
+    session_name=None,
+    inject_env=None,
+):
     """Run agent inside a tmux session, inject via tmux send-keys."""
     _check_tmux()
 
-    session_name = f"agentchattr-{agent}"
+    session_name = session_name or f"agentchattr-{agent}"
     agent_cmd = " ".join(
         [shlex.quote(command)] + [shlex.quote(a) for a in extra_args]
     )
 
-    # Prefix command with `env -u VAR ...` so env vars are unset inside the
-    # tmux session. subprocess.run(env=...) only affects the tmux client
-    # binary — the session shell inherits from the tmux server instead.
+    # Build env(1) prefix for the command INSIDE the tmux session.
+    # subprocess.run(env=...) only affects the tmux client binary — the
+    # session shell inherits from the tmux server instead.  Use env(1)
+    # to set (-u to unset, VAR=val to inject) vars in the actual session.
+    env_parts = []
     if strip_env:
-        unset_args = " ".join(f"-u {shlex.quote(v)}" for v in strip_env)
-        agent_cmd = f"env {unset_args} {agent_cmd}"
+        env_parts.extend(f"-u {shlex.quote(v)}" for v in strip_env)
+    if inject_env:
+        env_parts.extend(
+            f"{shlex.quote(k)}={shlex.quote(v)}"
+            for k, v in inject_env.items()
+        )
+    if env_parts:
+        agent_cmd = f"env {' '.join(env_parts)} {agent_cmd}"
 
     # Resolve cwd to absolute path (tmux -c needs it)
     from pathlib import Path
@@ -116,14 +146,13 @@ def run_agent(command, extra_args, cwd, env, queue_file, agent, no_restart, star
             subprocess.run(["tmux", "attach-session", "-t", session_name])
 
             # Check: did the agent exit, or did the user just detach?
-            check = subprocess.run(
-                ["tmux", "has-session", "-t", session_name],
-                capture_output=True,
-            )
-            if check.returncode == 0:
-                # Session still alive — user detached, agent running in background
+            if _session_exists(session_name):
+                # Session still alive — user detached, agent running in background.
+                # Keep the wrapper alive so the local proxy and heartbeats survive.
                 print(f"\n  Detached. {agent.capitalize()} still running in tmux.")
                 print(f"  Reattach: tmux attach -t {session_name}")
+                while _session_exists(session_name):
+                    time.sleep(1)
                 break
 
             # Session gone — agent exited

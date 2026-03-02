@@ -8,26 +8,24 @@ log = logging.getLogger(__name__)
 
 
 class AgentTrigger:
-    def __init__(self, config: dict, data_dir: str = "./data"):
-        self._config = config
+    def __init__(self, registry, data_dir: str = "./data"):
+        self._registry = registry
         self._data_dir = Path(data_dir)
 
     def is_available(self, name: str) -> bool:
-        return name in self._config
-
-    def is_busy(self, name: str) -> bool:
-        return False  # Worker handles busy state
+        return self._registry.is_registered(name)
 
     def get_status(self) -> dict:
         from mcp_bridge import is_online, is_active
+        instances = self._registry.get_all()
         return {
             name: {
                 "available": is_online(name),
                 "busy": is_active(name),
-                "label": cfg.get("label", name),
-                "color": cfg.get("color", "#888"),
+                "label": info["label"],
+                "color": info["color"],
             }
-            for name, cfg in self._config.items()
+            for name, info in instances.items()
         }
 
     async def trigger(self, agent_name: str, message: str = "", channel: str = "general", **kwargs):

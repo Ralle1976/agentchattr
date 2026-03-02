@@ -1,18 +1,19 @@
-"""Agent wrapper — runs the real interactive CLI with auto-trigger on @mentions.
+"""Agent wrapper - runs the real interactive CLI with auto-trigger on @mentions.
 
 Usage:
-    python wrapper.py claude     # Claude Code with chat auto-trigger
-    python wrapper.py codex      # Codex with chat auto-trigger
+    python wrapper.py claude
+    python wrapper.py codex
+    python wrapper.py gemini
 
 Cross-platform:
-  - Windows: injects keystrokes via Win32 WriteConsoleInput  (wrapper_windows.py)
-  - Mac/Linux: injects keystrokes via tmux send-keys          (wrapper_unix.py)
+  - Windows: injects keystrokes via Win32 WriteConsoleInput (wrapper_windows.py)
+  - Mac/Linux: injects keystrokes via tmux send-keys (wrapper_unix.py)
 
 How it works:
-  1. Starts the agent CLI in an interactive terminal (full TUI)
-  2. Watches the queue file in background for @mentions from the chat room
-  3. When triggered, injects "chat - use mcp" + Enter into the agent
-  4. The agent picks up the prompt as if the user typed it
+  1. Starts the agent CLI in an interactive terminal.
+  2. Watches the queue file in the background for @mentions from the chat room.
+  3. When triggered, injects "mcp read #channel - you were mentioned, take appropriate action".
+  4. The agent picks up the prompt as if the user typed it.
 """
 
 import json
@@ -28,68 +29,152 @@ ROOT = Path(__file__).parent
 
 SERVER_NAME = "agentchattr"
 
+
 # ---------------------------------------------------------------------------
-# MCP auto-config — ensure .mcp.json and .gemini/settings.json exist
+# Per-instance provider config
 # ---------------------------------------------------------------------------
 
-def _ensure_mcp(project_dir: Path, mcp_cfg: dict):
-    """Create MCP config files in the agent's working directory if missing."""
-    http_port = mcp_cfg.get("http_port", 8200)
-    sse_port = mcp_cfg.get("sse_port", 8201)
-    http_url = f"http://127.0.0.1:{http_port}/mcp"
-    sse_url = f"http://127.0.0.1:{sse_port}/sse"
+def _write_json_mcp_settings(config_file: Path, url: str, transport: str = "http",
+                              *, token: str = "") -> Path:
+    """Write a settings-style JSON file with nested mcpServers config."""
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    entry: dict = {"type": transport, "url": url}
+    if token:
+        entry["headers"] = {"Authorization": f"Bearer {token}"}
+    payload = {
+        "mcpServers": {
+            SERVER_NAME: entry
+        }
+    }
+    config_file.write_text(json.dumps(payload, indent=2) + "\n", "utf-8")
+    return config_file
 
-    # --- Claude (.mcp.json) ---
-    _ensure_json_mcp(project_dir / ".mcp.json", http_url)
 
-    # --- Gemini (.gemini/settings.json) ---
-    _ensure_json_mcp(project_dir / ".gemini" / "settings.json", sse_url, transport="sse")
-
-    # --- Codex (.codex/config.toml) ---
-    _ensure_codex_mcp(project_dir / ".codex" / "config.toml", http_url)
-
-
-def _ensure_json_mcp(mcp_file: Path, url: str, transport: str = "http"):
-    """Add agentchattr to a JSON MCP config file (Claude / Gemini)."""
-    mcp_file.parent.mkdir(parents=True, exist_ok=True)
-
+def _read_project_mcp_servers(project_dir: Path) -> dict:
+    """Read existing MCP servers from the project's .mcp.json."""
+    mcp_file = project_dir / ".mcp.json"
     if mcp_file.exists():
         try:
             data = json.loads(mcp_file.read_text("utf-8"))
-        except json.JSONDecodeError:
-            print(f"  MCP: WARNING — {mcp_file} has invalid JSON, can't add {SERVER_NAME}")
-            return
-    else:
-        data = {}
-
-    servers = data.setdefault("mcpServers", {})
-    if SERVER_NAME in servers:
-        return
-
-    servers[SERVER_NAME] = {"type": transport, "url": url}
-    mcp_file.write_text(json.dumps(data, indent=2) + "\n", "utf-8")
-    print(f"  MCP: added {SERVER_NAME} to {mcp_file}")
+            servers = data.get("mcpServers", {})
+            # Remove agentchattr — we'll add our own authenticated version
+            servers.pop(SERVER_NAME, None)
+            return servers
+        except Exception:
+            pass
+    return {}
 
 
-def _ensure_codex_mcp(toml_file: Path, url: str):
-    """Add agentchattr to Codex's TOML config file."""
-    toml_file.parent.mkdir(parents=True, exist_ok=True)
-    section = f"mcp_servers.{SERVER_NAME}"
+def _write_claude_mcp_config(
+    config_file: Path,
+    url: str,
+    *,
+    token: str = "",
+    project_servers: dict | None = None,
+) -> Path:
+    """Write a Claude Code --mcp-config file with bearer auth.
 
-    if toml_file.exists():
-        content = toml_file.read_text("utf-8")
-        if section in content:
-            return
-    else:
-        content = ""
+    Includes all project MCP servers (unity-mcp etc.) so --strict-mcp-config
+    can be used without losing other servers."""
+    config_file.parent.mkdir(parents=True, exist_ok=True)
 
-    block = f'\n[{section}]\nurl = "{url}"\n'
-    toml_file.write_text(content + block, "utf-8")
-    print(f"  MCP: added {SERVER_NAME} to {toml_file}")
+    # Start with other project servers (e.g. unity-mcp)
+    servers = dict(project_servers or {})
+
+    # Add agentchattr with bearer token for direct server auth
+    entry: dict = {"type": "http", "url": url}
+    if token:
+        entry["headers"] = {"Authorization": f"Bearer {token}"}
+    servers[SERVER_NAME] = entry
+
+    payload = {"mcpServers": servers}
+    config_file.write_text(json.dumps(payload, indent=2) + "\n", "utf-8")
+    return config_file
+
+
+def _build_provider_launch(
+    agent: str,
+    instance_name: str,
+    data_dir: Path,
+    proxy_url: str | None,
+    extra_args: list[str],
+    env: dict[str, str],
+    *,
+    token: str = "",
+    mcp_cfg: dict | None = None,
+    project_dir: Path | None = None,
+) -> tuple[list[str], dict[str, str], dict[str, str]]:
+    """Return provider-specific launch args/env/inject_env.
+
+    inject_env: env vars that must propagate INTO the agent process.  On
+    Mac/Linux these are prefixed onto the tmux command via ``env VAR=val``
+    because subprocess.run(env=...) only affects the tmux client binary.
+    On Windows they are simply merged into the Popen env dict.
+    """
+    launch_args = list(extra_args)
+    launch_env = dict(env)
+    inject_env: dict[str, str] = {}
+    config_dir = data_dir / "provider-config"
+
+    if agent == "claude":
+        # Claude connects DIRECTLY to the real MCP server with bearer token.
+        # No proxy needed — server resolves identity from token.
+        http_port = (mcp_cfg or {}).get("http_port", 8200)
+        server_url = f"http://127.0.0.1:{http_port}/mcp"
+        project_servers = _read_project_mcp_servers(project_dir) if project_dir else {}
+        config_path = _write_claude_mcp_config(
+            config_dir / f"{instance_name}-claude-mcp.json",
+            server_url,
+            token=token,
+            project_servers=project_servers,
+        )
+        launch_args = ["--mcp-config", str(config_path), *launch_args]
+    elif agent == "gemini":
+        # Gemini connects DIRECTLY to the real SSE server with bearer token.
+        # No proxy needed — server resolves identity from token.
+        sse_port = (mcp_cfg or {}).get("sse_port", 8201)
+        server_url = f"http://127.0.0.1:{sse_port}/sse"
+        settings_path = _write_json_mcp_settings(
+            config_dir / f"{instance_name}-gemini-settings.json",
+            server_url,
+            transport="sse",
+            token=token,
+        )
+        # Must propagate through tmux on Mac/Linux — use inject_env, not launch_env.
+        inject_env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = str(settings_path)
+    elif agent == "codex":
+        launch_args = [
+            "-c",
+            f'mcp_servers.{SERVER_NAME}.url="{proxy_url}"',
+            *launch_args,
+        ]
+
+    return launch_args, launch_env, inject_env
+
+
+def _register_instance(server_port: int, base: str, label: str | None = None) -> dict:
+    import urllib.request
+
+    reg_body = json.dumps({"base": base, "label": label}).encode()
+    reg_req = urllib.request.Request(
+        f"http://127.0.0.1:{server_port}/api/register",
+        method="POST",
+        data=reg_body,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(reg_req, timeout=5) as reg_resp:
+        return json.loads(reg_resp.read())
+
+
+def _auth_headers(token: str, *, include_json: bool = False) -> dict[str, str]:
+    headers = {"Authorization": f"Bearer {token}"}
+    if include_json:
+        headers["Content-Type"] = "application/json"
+    return headers
 
 
 # ---------------------------------------------------------------------------
-# Queue Watcher — polls for @mention triggers, calls platform inject function
+# Queue watcher
 # ---------------------------------------------------------------------------
 
 def _notify_recovery(data_dir: Path, agent_name: str):
@@ -101,14 +186,24 @@ def _notify_recovery(data_dir: Path, agent_name: str):
         pass
 
 
-def _queue_watcher(queue_file: Path, agent_name: str, inject_fn):
-    """Poll queue file; call inject_fn('chat - use mcp') when triggered."""
+_IDENTITY_HINT = (
+    " (If this is a multi-instance session, reclaim your previous identity from "
+    "your context window, NOT from the chat history before responding. If you "
+    "didn't have one, tell the user to give you a name by clicking your status "
+    "pill at the top.)"
+)
+
+
+def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = False):
+    """Poll queue file and inject an MCP read task when triggered."""
+    first_mention = True
     while True:
         try:
+            _, queue_file = get_identity_fn()
             if queue_file.exists() and queue_file.stat().st_size > 0:
                 with open(queue_file, "r", encoding="utf-8") as f:
                     lines = f.readlines()
-                queue_file.write_text("")
+                queue_file.write_text("", "utf-8")
 
                 has_trigger = False
                 channel = "general"
@@ -118,18 +213,21 @@ def _queue_watcher(queue_file: Path, agent_name: str, inject_fn):
                         continue
                     try:
                         data = json.loads(line)
-                        has_trigger = True
-                        if isinstance(data, dict) and "channel" in data:
-                            channel = data["channel"]
                     except json.JSONDecodeError:
-                        pass
+                        continue
+                    has_trigger = True
+                    if isinstance(data, dict) and "channel" in data:
+                        channel = data["channel"]
 
                 if has_trigger:
-                    # Small delay to let the TUI settle
                     time.sleep(0.5)
-                    inject_fn(f"mcp read #{channel} and if addressed respond in the chat")
+                    prompt = f"mcp read #{channel} - you were mentioned, take appropriate action"
+                    if first_mention and is_multi_instance:
+                        prompt += _IDENTITY_HINT
+                        first_mention = False
+                    inject_fn(prompt)
         except Exception:
-            pass  # Silently continue — monitor will restart if thread dies
+            pass
 
         time.sleep(1)
 
@@ -140,17 +238,18 @@ def _queue_watcher(queue_file: Path, agent_name: str, inject_fn):
 
 def main():
     import argparse
+    import urllib.error
+    import urllib.request
 
-    # Load config to get valid agent names
     with open(ROOT / "config.toml", "rb") as f:
         config = tomllib.load(f)
 
     agent_names = list(config.get("agents", {}).keys())
 
     parser = argparse.ArgumentParser(description="Agent wrapper with chat auto-trigger")
-    parser.add_argument("agent", choices=agent_names,
-                        help=f"Agent to wrap ({', '.join(agent_names)})")
-    parser.add_argument("--no-restart", action="store_true", help="Don't restart on exit")
+    parser.add_argument("agent", choices=agent_names, help=f"Agent to wrap ({', '.join(agent_names)})")
+    parser.add_argument("--no-restart", action="store_true", help="Do not restart on exit")
+    parser.add_argument("--label", type=str, default=None, help="Custom display label")
     args, extra = parser.parse_known_args()
 
     agent = args.agent
@@ -159,80 +258,215 @@ def main():
     command = agent_cfg.get("command", agent)
     data_dir = ROOT / config.get("server", {}).get("data_dir", "./data")
     data_dir.mkdir(parents=True, exist_ok=True)
-    queue_file = data_dir / f"{agent}_queue.jsonl"
+    server_port = config.get("server", {}).get("port", 8300)
+    mcp_cfg = config.get("mcp", {})
 
-    # Flush stale queue entries from previous crashed sessions
+    try:
+        registration = _register_instance(server_port, agent, args.label)
+    except Exception as exc:
+        print(f"  Registration failed ({exc}).")
+        print("  Wrapper cannot continue without a registered identity.")
+        sys.exit(1)
+
+    assigned_name = registration["name"]
+    assigned_token = registration["token"]
+    print(f"  Registered as: {assigned_name} (slot {registration.get('slot', '?')})")
+
+    proxy = None
+    proxy_url = None
+
+    # Claude and Gemini connect directly to the server with bearer token — no proxy.
+    # Codex still uses the local proxy for sender injection.
+    if agent not in ("claude", "gemini"):
+        from mcp_proxy import McpIdentityProxy
+
+        if agent == "gemini":
+            upstream_base = f"http://127.0.0.1:{mcp_cfg.get('sse_port', 8201)}"
+            proxy_path = "/sse"
+        else:
+            upstream_base = f"http://127.0.0.1:{mcp_cfg.get('http_port', 8200)}"
+            proxy_path = "/mcp"
+
+        proxy = McpIdentityProxy(
+            upstream_base=upstream_base,
+            upstream_path=proxy_path,
+            agent_name=assigned_name,
+            instance_token=assigned_token,
+        )
+        if proxy.start() is False:
+            print("  Failed to start MCP proxy.")
+            sys.exit(1)
+        proxy_url = f"{proxy.url}{proxy_path}"
+
+    _identity_lock = threading.Lock()
+    _identity = {
+        "name": assigned_name,
+        "queue": data_dir / f"{assigned_name}_queue.jsonl",
+        "token": assigned_token,
+    }
+
+    def get_identity():
+        with _identity_lock:
+            return _identity["name"], _identity["queue"]
+
+    def get_token():
+        with _identity_lock:
+            return _identity["token"]
+
+    # For Claude: rewrite MCP config when token/name changes (e.g. after 409 re-register).
+    # Claude Code won't re-read mid-session, but the file is correct for next restart.
+    _claude_config_dir = data_dir / "provider-config"
+
+    def _rewrite_claude_config(instance_name: str, token: str):
+        if agent != "claude":
+            return
+        try:
+            http_port = mcp_cfg.get("http_port", 8200)
+            server_url = f"http://127.0.0.1:{http_port}/mcp"
+            proj_dir = (ROOT / cwd).resolve()
+            project_servers = _read_project_mcp_servers(proj_dir)
+            _write_claude_mcp_config(
+                _claude_config_dir / f"{instance_name}-claude-mcp.json",
+                server_url,
+                token=token,
+                project_servers=project_servers,
+            )
+        except Exception:
+            pass
+
+    def set_runtime_identity(new_name: str | None = None, new_token: str | None = None):
+        with _identity_lock:
+            old_name = _identity["name"]
+            old_token = _identity["token"]
+            changed = False
+            if new_name and new_name != old_name:
+                _identity["name"] = new_name
+                _identity["queue"] = data_dir / f"{new_name}_queue.jsonl"
+                changed = True
+            if new_token and new_token != old_token:
+                _identity["token"] = new_token
+                changed = True
+            current_name = _identity["name"]
+            current_token = _identity["token"]
+
+        if changed and proxy is not None:
+            proxy.agent_name = current_name
+            proxy.token = current_token
+        if changed:
+            if new_name and new_name != old_name:
+                print(f"  Identity updated: {old_name} -> {new_name}")
+            if new_token and new_token != old_token:
+                print(f"  Session refreshed for @{current_name}")
+            _rewrite_claude_config(current_name, current_token)
+
+        return changed
+
+    queue_file = _identity["queue"]
     if queue_file.exists():
         queue_file.write_text("", "utf-8")
 
-    # Auto-configure MCP in the agent's working directory so it just works
-    mcp_cfg = config.get("mcp", {})
-    project_dir = (ROOT / cwd).resolve()
-    _ensure_mcp(project_dir, mcp_cfg)
-
-    # Strip CLAUDECODE to avoid "nested session" detection.
-    # Also strip any env vars listed in the agent's strip_env config
-    # (e.g. ANTHROPIC_API_KEY so Claude uses its stored OAuth credentials).
     strip_vars = {"CLAUDECODE"} | set(agent_cfg.get("strip_env", []))
     env = {k: v for k, v in os.environ.items() if k not in strip_vars}
 
-    # Resolve command on PATH
     resolved = shutil.which(command)
     if not resolved:
         print(f"  Error: '{command}' not found on PATH.")
-        print(f"  Install it first, then try again.")
+        print("  Install it first, then try again.")
         sys.exit(1)
     command = resolved
 
-    print(f"  === {agent.capitalize()} Chat Wrapper ===")
-    print(f"  @{agent} mentions auto-inject 'chat - use mcp'")
+    project_dir = (ROOT / cwd).resolve()
+    launch_args, env, inject_env = _build_provider_launch(
+        agent=agent,
+        instance_name=assigned_name,
+        data_dir=data_dir,
+        proxy_url=proxy_url,
+        extra_args=extra,
+        env=env,
+        token=assigned_token,
+        mcp_cfg=mcp_cfg,
+        project_dir=project_dir,
+    )
+
+    print(f"  === {assigned_name.capitalize()} Chat Wrapper ===")
+    if agent == "claude":
+        http_port = mcp_cfg.get("http_port", 8200)
+        print(f"  MCP: direct to server (port {http_port}) with bearer auth")
+    elif agent == "gemini":
+        sse_port = mcp_cfg.get("sse_port", 8201)
+        print(f"  MCP: direct to server (port {sse_port}/sse) with bearer auth")
+    elif proxy_url:
+        print(f"  Local MCP proxy: {proxy_url}")
+    print(f"  @{assigned_name} mentions auto-inject MCP reads")
     print(f"  Starting {command} in {cwd}...\n")
 
-    # Heartbeat — ping the server every 60s to keep presence alive
-    server_port = config.get("server", {}).get("port", 8300)
-
     def _heartbeat():
-        import urllib.request
-        url = f"http://127.0.0.1:{server_port}/api/heartbeat/{agent}"
         while True:
+            current_name, _ = get_identity()
+            current_token = get_token()
+            url = f"http://127.0.0.1:{server_port}/api/heartbeat/{current_name}"
             try:
-                req = urllib.request.Request(url, method="POST", data=b"")
-                urllib.request.urlopen(req, timeout=5)
+                req = urllib.request.Request(
+                    url,
+                    method="POST",
+                    data=b"",
+                    headers=_auth_headers(current_token),
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    resp_data = json.loads(resp.read())
+                server_name = resp_data.get("name", current_name)
+                if server_name != current_name:
+                    set_runtime_identity(server_name)
+            except urllib.error.HTTPError as exc:
+                if exc.code == 409:
+                    try:
+                        replacement = _register_instance(server_port, agent, args.label)
+                        set_runtime_identity(replacement["name"], replacement["token"])
+                        _notify_recovery(data_dir, replacement["name"])
+                    except Exception:
+                        pass
+                time.sleep(5)
+                continue
             except Exception:
-                pass
-            time.sleep(60)
+                time.sleep(5)
+                continue
+
+            time.sleep(5)
 
     threading.Thread(target=_heartbeat, daemon=True).start()
 
-    # Helper: start the queue watcher with a given inject function
-    # Returns the thread so the monitor can check is_alive()
     _watcher_inject_fn = None
     _watcher_thread = None
+    _is_multi_instance = registration.get("slot", 1) > 1
 
     def start_watcher(inject_fn):
         nonlocal _watcher_inject_fn, _watcher_thread
         _watcher_inject_fn = inject_fn
         _watcher_thread = threading.Thread(
-            target=_queue_watcher, args=(queue_file, agent, inject_fn), daemon=True
+            target=_queue_watcher,
+            args=(get_identity, inject_fn),
+            kwargs={"is_multi_instance": _is_multi_instance},
+            daemon=True,
         )
         _watcher_thread.start()
 
-    # Monitor thread: checks watcher health and auto-restarts if dead
     def _watcher_monitor():
         nonlocal _watcher_thread
         while True:
             time.sleep(5)
             if _watcher_thread and not _watcher_thread.is_alive() and _watcher_inject_fn:
                 _watcher_thread = threading.Thread(
-                    target=_queue_watcher, args=(queue_file, agent, _watcher_inject_fn), daemon=True
+                    target=_queue_watcher,
+                    args=(get_identity, _watcher_inject_fn),
+                    kwargs={"is_multi_instance": _is_multi_instance},
+                    daemon=True,
                 )
                 _watcher_thread.start()
-                _notify_recovery(data_dir, agent)
+                current_name, _ = get_identity()
+                _notify_recovery(data_dir, current_name)
 
-    monitor = threading.Thread(target=_watcher_monitor, daemon=True)
-    monitor.start()
+    threading.Thread(target=_watcher_monitor, daemon=True).start()
 
-    # Activity monitor — detect terminal output and report to server
     _activity_checker = None
 
     def _set_activity_checker(checker):
@@ -240,8 +474,6 @@ def main():
         _activity_checker = checker
 
     def _activity_monitor():
-        import urllib.request
-        url = f"http://127.0.0.1:{server_port}/api/heartbeat/{agent}"
         last_active = None
         while True:
             time.sleep(1)
@@ -250,10 +482,15 @@ def main():
             try:
                 active = _activity_checker()
                 if active != last_active:
+                    current_name, _ = get_identity()
+                    current_token = get_token()
+                    url = f"http://127.0.0.1:{server_port}/api/heartbeat/{current_name}"
                     body = json.dumps({"active": active}).encode()
                     req = urllib.request.Request(
-                        url, method="POST", data=body,
-                        headers={"Content-Type": "application/json"},
+                        url,
+                        method="POST",
+                        data=body,
+                        headers=_auth_headers(current_token, include_json=True),
                     )
                     urllib.request.urlopen(req, timeout=5)
                     last_active = active
@@ -262,20 +499,21 @@ def main():
 
     threading.Thread(target=_activity_monitor, daemon=True).start()
 
-    # Dispatch to platform-specific runner
-    _agent_pid = [None]  # shared mutable — run_agent sets [0] to the child PID
+    _agent_pid = [None]
 
     if sys.platform == "win32":
-        from wrapper_windows import run_agent, get_activity_checker
+        from wrapper_windows import get_activity_checker, run_agent
+
         _set_activity_checker(get_activity_checker(_agent_pid))
     else:
-        from wrapper_unix import run_agent, get_activity_checker
-        session_name = f"agentchattr-{agent}"
-        _set_activity_checker(get_activity_checker(session_name))
+        from wrapper_unix import get_activity_checker, run_agent
 
-    run_agent(
+        unix_session_name = f"agentchattr-{assigned_name}"
+        _set_activity_checker(get_activity_checker(unix_session_name))
+
+    run_kwargs = dict(
         command=command,
-        extra_args=extra,
+        extra_args=launch_args,
         cwd=cwd,
         env=env,
         queue_file=queue_file,
@@ -284,7 +522,30 @@ def main():
         start_watcher=start_watcher,
         strip_env=list(strip_vars),
         pid_holder=_agent_pid,
+        inject_env=inject_env,
     )
+    if sys.platform != "win32":
+        run_kwargs["session_name"] = unix_session_name
+
+    try:
+        run_agent(**run_kwargs)
+    finally:
+        try:
+            current_name, _ = get_identity()
+            current_token = get_token()
+            dereg_req = urllib.request.Request(
+                f"http://127.0.0.1:{server_port}/api/deregister/{current_name}",
+                method="POST",
+                data=b"",
+                headers=_auth_headers(current_token),
+            )
+            urllib.request.urlopen(dereg_req, timeout=5)
+            print(f"  Deregistered {current_name}")
+        except Exception:
+            pass
+
+        if proxy is not None:
+            proxy.stop()
 
     print("  Wrapper stopped.")
 

@@ -1,33 +1,64 @@
-#!/usr/bin/env bash
-# agentchattr — starts server (if not running) + Gemini wrapper (auto-approve mode)
+#!/usr/bin/env sh
+# agentchattr - starts server (if not running) + Gemini wrapper (auto-approve mode)
 cd "$(dirname "$0")/.."
 
-# Auto-create venv and install deps on first run
-if [ ! -d ".venv" ]; then
-    python3 -m venv .venv
-    .venv/bin/pip install -q -r requirements.txt > /dev/null 2>&1
+PYTHON_BIN=""
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+else
+    echo "Python 3 is required but was not found on PATH."
+    exit 1
 fi
-source .venv/bin/activate
 
-# Start server in a separate terminal if not already running
-if ! lsof -i :8300 -sTCP:LISTEN >/dev/null 2>&1 && \
-   ! ss -tlnp 2>/dev/null | grep -q ':8300 '; then
-    if [[ "$OSTYPE" == darwin* ]]; then
-        osascript -e "tell app \"Terminal\" to do script \"cd '$(pwd)' && source .venv/bin/activate && python run.py\"" > /dev/null 2>&1
+ensure_venv() {
+    if [ -d ".venv" ] && [ ! -x ".venv/bin/python" ]; then
+        echo "Recreating .venv for this platform..."
+        rm -rf .venv
+    fi
+
+    if [ ! -x ".venv/bin/python" ]; then
+        echo "Creating virtual environment..."
+        "$PYTHON_BIN" -m venv .venv || {
+            echo "Error: failed to create .venv with $PYTHON_BIN."
+            exit 1
+        }
+        .venv/bin/python -m pip install -q -r requirements.txt || {
+            echo "Error: failed to install Python dependencies."
+            exit 1
+        }
+    fi
+}
+
+is_server_running() {
+    lsof -i :8300 -sTCP:LISTEN >/dev/null 2>&1 || \
+    ss -tlnp 2>/dev/null | grep -q ':8300 '
+}
+
+ensure_venv
+
+if ! is_server_running; then
+    if [ "$(uname -s)" = "Darwin" ]; then
+        osascript -e "tell app \"Terminal\" to do script \"cd '$(pwd)' && .venv/bin/python run.py\"" > /dev/null 2>&1
     else
-        if command -v gnome-terminal > /dev/null 2>&1; then
-            gnome-terminal -- bash -c "cd '$(pwd)' && source .venv/bin/activate && python run.py; read"
-        elif command -v xterm > /dev/null 2>&1; then
-            xterm -e "cd '$(pwd)' && source .venv/bin/activate && python run.py" &
+        if command -v gnome-terminal >/dev/null 2>&1; then
+            gnome-terminal -- sh -c "cd '$(pwd)' && .venv/bin/python run.py; printf 'Press Enter to close... '; read _"
+        elif command -v xterm >/dev/null 2>&1; then
+            xterm -e sh -c "cd '$(pwd)' && .venv/bin/python run.py" &
         else
-            python run.py > data/server.log 2>&1 &
+            .venv/bin/python run.py > data/server.log 2>&1 &
         fi
     fi
-    # Wait for server to be ready (up to 15s)
-    for i in $(seq 1 30); do
-        (lsof -i :8300 -sTCP:LISTEN >/dev/null 2>&1 || ss -tlnp 2>/dev/null | grep -q ':8300 ') && break
+
+    i=0
+    while [ "$i" -lt 30 ]; do
+        if is_server_running; then
+            break
+        fi
         sleep 0.5
+        i=$((i + 1))
     done
 fi
 
-python wrapper.py gemini -- --yolo
+.venv/bin/python wrapper.py gemini -- --yolo

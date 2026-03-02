@@ -19,6 +19,7 @@ class MessageStore:
         self._callbacks: list = []  # called on each new message
         self._todo_callbacks: list = []  # called on todo changes
         self._delete_callbacks: list = []  # called on message deletion
+        self.upload_dir = self._path.parent.parent / "uploads"  # Default fallback
         self._load()
         self._load_todos()
 
@@ -125,7 +126,7 @@ class MessageStore:
 
         # Clean up uploaded images outside the lock
         for filename in deleted_attachments:
-            filepath = Path("./uploads") / filename
+            filepath = self.upload_dir / filename
             if filepath.exists():
                 try:
                     filepath.unlink()
@@ -183,6 +184,18 @@ class MessageStore:
                     modified = True
             if modified:
                 self._rewrite_jsonl()
+
+    def rename_sender(self, old_name: str, new_name: str) -> int:
+        """Rename sender on all messages from old_name to new_name. Returns count updated."""
+        with self._lock:
+            count = 0
+            for m in self._messages:
+                if m.get("sender") == old_name:
+                    m["sender"] = new_name
+                    count += 1
+            if count:
+                self._rewrite_jsonl()
+        return count
 
     def delete_channel(self, name: str):
         """Remove all messages belonging to a deleted channel."""

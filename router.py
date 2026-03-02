@@ -23,7 +23,8 @@ class Router:
         return self._channels[channel]
 
     def _build_pattern(self):
-        names = "|".join(re.escape(n) for n in sorted(self.agent_names))
+        # Sort longest-first so "gemini-2" is tried before "gemini"
+        names = "|".join(re.escape(n) for n in sorted(self.agent_names, key=len, reverse=True))
         self._mention_re = re.compile(
             rf"@({names}|both|all)\b", re.IGNORECASE
         )
@@ -87,3 +88,8 @@ class Router:
 
     def set_guard_emitted(self, channel: str = "general"):
         self._get_ch(channel)["guard_emitted"] = True
+
+    def update_agents(self, names: list[str]):
+        """Replace the agent name set and rebuild the mention regex."""
+        self.agent_names = set(n.lower() for n in names)
+        self._build_pattern()

@@ -18,6 +18,7 @@ from store import MessageStore
 from decisions import DecisionStore
 from router import Router
 from agents import AgentTrigger
+from registry import RuntimeRegistry
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ store: MessageStore | None = None
 decisions: DecisionStore | None = None
 router: Router | None = None
 agents: AgentTrigger | None = None
+registry: RuntimeRegistry | None = None
 config: dict = {}
 ws_clients: set[WebSocket] = set()
 
@@ -134,6 +136,22 @@ def _save_settings():
     p.write_text(json.dumps(room_settings, indent=2), "utf-8")
 
 
+def _extract_agent_token(request: Request) -> str:
+    auth = request.headers.get("authorization", "")
+    if auth and auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return request.headers.get("x-agent-token", "").strip()
+
+
+def _resolve_authenticated_agent(request: Request) -> dict | None:
+    if not registry:
+        return None
+    token = _extract_agent_token(request)
+    if not token:
+        return None
+    return registry.resolve_token(token)
+
+
 # --- Security middleware ---
 # Paths that don't require the session token (public assets).
 _PUBLIC_PREFIXES = ("/", "/static/")
@@ -156,7 +174,7 @@ def _install_security_middleware(token: str, cfg: dict):
             # Static assets, index page, and uploaded images are public.
             # The index page injects the token client-side via same-origin script.
             # Uploads use random filenames and have path-traversal protection.
-            if path == "/" or path.startswith(("/static/", "/uploads/", "/api/heartbeat/")):
+            if path == "/" or path.startswith(("/static/", "/uploads/", "/api/heartbeat/", "/api/register", "/api/deregister/")):
                 return await call_next(request)
 
             # --- Origin check (blocks cross-origin / DNS-rebinding attacks) ---
@@ -184,7 +202,7 @@ def _install_security_middleware(token: str, cfg: dict):
 
 
 def configure(cfg: dict, session_token: str = ""):
-    global store, decisions, router, agents, config
+    global store, decisions, router, agents, registry, config
     config = cfg
 
     # --- Security: store the session token and install middleware ---
@@ -200,18 +218,29 @@ def configure(cfg: dict, session_token: str = ""):
         log_path = legacy_log_path
 
     store = MessageStore(str(log_path))
+    # Initialize store upload dir from config
+    raw_upload_dir = cfg.get("images", {}).get("upload_dir", "./uploads")
+    store.upload_dir = Path(raw_upload_dir)
+    
     decisions = DecisionStore(str(Path(data_dir) / "decisions.json"))
     decisions.on_change(_on_decision_change)
 
     max_hops = cfg.get("routing", {}).get("max_agent_hops", 4)
 
+    # Registry: single source of truth for all live agent state
+    registry = RuntimeRegistry(data_dir=data_dir)
+    registry.seed(cfg.get("agents", {}))
+    registry.on_change(_on_registry_change)
+
+    # Router starts with base agent names (backward compat for direct MCP users),
+    # registry.on_change updates it dynamically when instances register/deregister
     agent_names = list(cfg.get("agents", {}).keys())
     router = Router(
         agent_names=agent_names,
         default_mention=cfg.get("routing", {}).get("default", "none"),
         max_hops=max_hops,
     )
-    agents = AgentTrigger(cfg.get("agents", {}), data_dir=data_dir)
+    agents = AgentTrigger(registry, data_dir=data_dir)
 
     # Bridge: when ANY message is added to store (including via MCP),
     # broadcast to all WebSocket clients
@@ -228,6 +257,7 @@ def configure(cfg: dict, session_token: str = ""):
     _data_dir = Path(data_dir)
 
     _known_online: set[str] = set()  # agents we've seen join — track for leave messages
+    _posted_leave: set[str] = set()  # agents we've already posted a leave for — debounce
 
     _known_active: set[str] = set()
 
@@ -249,7 +279,13 @@ def configure(cfg: dict, session_token: str = ""):
             except Exception:
                 pass
 
-            # Presence expiry — post leave messages for agents that went offline
+            # Pending instances (slot 2+) wait for human naming or agent claim.
+            # No auto-confirm — identity must be explicitly resolved.
+
+            # Presence expiry — post leave messages (but do NOT deregister).
+            # Deregistration only happens via /api/deregister (wrapper shutdown)
+            # OR the 60s crash timeout below.
+            # Short timeout (10s) prevents slot theft when MCP tool calls are intermittent.
             try:
                 now = _time.time()
                 with mcp_bridge._presence_lock:
@@ -261,18 +297,92 @@ def configure(cfg: dict, session_token: str = ""):
                         name for name, active in mcp_bridge._activity.items()
                         if active
                     }
-                # Detect agents that were online but are no longer
-                went_offline = _known_online - currently_online
-                came_online = currently_online - _known_online
+
+                # Crash timeout: if a wrapper hasn't heartbeated for 60s,
+                # it's dead — deregister it to free the slot.
+                _CRASH_TIMEOUT = 60
+                registered = set(registry.get_all_names())
+                for name in registered:
+                    with mcp_bridge._presence_lock:
+                        last_seen = mcp_bridge._presence.get(name, 0)
+                    if last_seen > 0 and now - last_seen > _CRASH_TIMEOUT:
+                        log.info(f"Crash timeout: deregistering {name} (no heartbeat for {_CRASH_TIMEOUT}s)")
+                        result = registry.deregister(name)
+                        if result:
+                            mcp_bridge.purge_identity(name)
+                            registry.clean_renames_for(name)
+                            renamed = result.get("_renamed_back")
+                            if renamed:
+                                mcp_bridge.migrate_identity(renamed["old"], renamed["new"])
+                                store.rename_sender(renamed["old"], renamed["new"])
+                                if _event_loop:
+                                    rename_event = json.dumps({
+                                        "type": "agent_renamed",
+                                        "old_name": renamed["old"],
+                                        "new_name": renamed["new"],
+                                    })
+                                    asyncio.run_coroutine_threadsafe(_broadcast(rename_event), _event_loop)
+                            channels = room_settings.get("channels", ["general"])
+                            for ch in channels:
+                                store.add(name, f"{name} disconnected (timeout)", msg_type="leave", channel=ch)
+                            _posted_leave.add(name)
+
+                # Re-fetch registered names (may have changed from crash timeout above)
+                registered = set(registry.get_all_names())
+
+                # Detect registered instances going offline (leave message only)
+                timed_out = registered - currently_online
+                for name in timed_out:
+                    inst = registry.get_instance(name)
+                    if not inst:
+                        continue
+                    # Skip names that were just renamed (not actually offline)
+                    with mcp_bridge._presence_lock:
+                        was_renamed = name in mcp_bridge._renamed_from
+                        if was_renamed:
+                            mcp_bridge._renamed_from.discard(name)
+                    if was_renamed:
+                        continue
+                    # Post leave message ONCE per offline transition (debounced)
+                    if name not in _posted_leave:
+                        _posted_leave.add(name)
+                        channels = room_settings.get("channels", ["general"])
+                        for ch in channels:
+                            store.add(name, f"{name} disconnected", msg_type="leave", channel=ch)
+
+                # Clear leave debounce for agents that came back online
+                _posted_leave -= currently_online
+
+                # Detect other agents (non-registered) going offline
+                went_offline = (_known_online - currently_online) - timed_out
                 for name in went_offline:
-                    # Post leave in all channels so every agent sees it
-                    channels = room_settings.get("channels", ["general"])
-                    for ch in channels:
-                        store.add(name, f"{name} disconnected", msg_type="leave", channel=ch)
-                    if _event_loop:
-                        asyncio.run_coroutine_threadsafe(broadcast_status(), _event_loop)
-                # Broadcast on activity state changes (agent starts/stops working)
-                if currently_active != _known_active:
+                    # Skip leave messages for names that were just renamed
+                    with mcp_bridge._presence_lock:
+                        was_renamed = name in mcp_bridge._renamed_from
+                        if was_renamed:
+                            mcp_bridge._renamed_from.discard(name)
+                    if was_renamed:
+                        continue
+                    if not registry.is_registered(name) and name not in _posted_leave:
+                        _posted_leave.add(name)
+                        channels = room_settings.get("channels", ["general"])
+                        for ch in channels:
+                            store.add(name, f"{name} disconnected", msg_type="leave", channel=ch)
+
+                if _known_online != currently_online and _event_loop:
+                    asyncio.run_coroutine_threadsafe(broadcast_status(), _event_loop)
+
+                # Clear stale activity for agents that went offline
+                with mcp_bridge._presence_lock:
+                    stale_active = [n for n in mcp_bridge._activity
+                                    if mcp_bridge._activity.get(n) and n not in currently_online]
+                    for n in stale_active:
+                        mcp_bridge._activity[n] = False
+                    if stale_active:
+                        currently_active -= set(stale_active)
+
+                # Broadcast status on any change (online set or activity set)
+                if currently_active != _known_active or _known_online != currently_online:
                     _known_active.clear()
                     _known_active.update(currently_active)
                     if _event_loop:
@@ -332,7 +442,7 @@ async def _handle_new_message(msg: dict):
     # and skip broadcasting the raw text.
     text = msg.get("text", "")
     # Strip @mentions to find the slash command (e.g. "@claude @codex /hatmaking")
-    stripped = _re.sub(r"@\w+\s*", "", text).strip().lower()
+    stripped = _re.sub(r"@[\w-]+\s*", "", text).strip().lower()
     _broadcast_cmds = ("/hatmaking", "/artchallenge", "/roastreview", "/poetry")
     cmd_word = stripped.split()[0] if stripped else ""
     is_broadcast_cmd = cmd_word in _broadcast_cmds
@@ -359,7 +469,7 @@ async def _handle_new_message(msg: dict):
         return
 
     if stripped == "/roastreview":
-        agent_names = list(config.get("agents", {}).keys())
+        agent_names = registry.get_all_names() if registry else list(config.get("agents", {}).keys())
         mentions = " ".join(f"@{a}" for a in agent_names)
         store.add(sender, f"{mentions} Time for a roast review! Inspect each other's work and constructively roast it.", channel=channel)
         return
@@ -367,7 +477,7 @@ async def _handle_new_message(msg: dict):
     if stripped.startswith("/artchallenge"):
         parts = stripped.split(None, 1)
         theme = parts[1] if len(parts) > 1 else "anything you like"
-        agent_names = list(config.get("agents", {}).keys())
+        agent_names = registry.get_all_names() if registry else list(config.get("agents", {}).keys())
         mentions = " ".join(f"@{a}" for a in agent_names)
         store.add(
             sender,
@@ -379,11 +489,14 @@ async def _handle_new_message(msg: dict):
         return
 
     if stripped == "/hatmaking":
-        agent_names = list(config.get("agents", {}).keys())
+        agent_names = registry.get_all_names() if registry else list(config.get("agents", {}).keys())
         mentions = " ".join(f"@{a}" for a in agent_names)
+        all_instances = registry.get_all() if registry else {}
         agents_cfg = config.get("agents", {})
         color_parts = ", ".join(
-            f"{a}={agents_cfg[a].get('color', '#888')}" for a in agent_names if a in agents_cfg
+            f"{a}={all_instances[a]['color']}" if a in all_instances
+            else f"{a}={agents_cfg.get(a, {}).get('color', '#888')}"
+            for a in agent_names
         )
         store.add(
             sender,
@@ -401,7 +514,7 @@ async def _handle_new_message(msg: dict):
         form = parts[1] if len(parts) > 1 else "haiku"
         if form not in ("haiku", "limerick", "sonnet"):
             form = "haiku"
-        agent_names = list(config.get("agents", {}).keys())
+        agent_names = registry.get_all_names() if registry else list(config.get("agents", {}).keys())
         mentions = " ".join(f"@{a}" for a in agent_names)
         prompts = {
             "haiku": "Write a haiku about the current state of this codebase.",
@@ -411,7 +524,16 @@ async def _handle_new_message(msg: dict):
         store.add(sender, f"{mentions} {prompts[form]}", channel=channel)
         return
 
-    targets = router.get_targets(sender, text, channel)
+    raw_targets = router.get_targets(sender, text, channel)
+    # Resolve base family names to actual registered instances
+    # e.g. 'claude' → 'claude-prime' when slot-1 was renamed
+    targets = []
+    for t in raw_targets:
+        if registry:
+            targets.extend(registry.resolve_to_instances(t))
+        else:
+            targets.append(t)
+    targets = list(dict.fromkeys(targets))  # dedupe, preserve order
 
     if router.is_paused(channel):
         # Only emit the loop guard notice once per pause
@@ -430,6 +552,11 @@ async def _handle_new_message(msg: dict):
 
     import mcp_bridge
     for target in targets:
+        # Skip pending instances — they haven't been named/claimed yet
+        if registry:
+            inst = registry.get_instance(target)
+            if inst and inst.get("state") == "pending":
+                continue
         if not mcp_bridge.is_online(target):
             store.add("system", f"{target} appears offline — message queued.", msg_type="system", channel=channel)
         if agents.is_available(target):
@@ -438,10 +565,21 @@ async def _handle_new_message(msg: dict):
 
 # --- broadcasting ---
 
+async def _broadcast(raw_json: str):
+    """Send a pre-serialized JSON string to all WebSocket clients."""
+    dead = set()
+    for client in list(ws_clients):
+        try:
+            await client.send_text(raw_json)
+        except Exception:
+            dead.add(client)
+    ws_clients.difference_update(dead)
+
+
 async def broadcast(msg: dict):
     data = json.dumps({"type": "message", "data": msg})
     dead = set()
-    for client in ws_clients:
+    for client in list(ws_clients):
         try:
             await client.send_text(data)
         except Exception:
@@ -454,7 +592,7 @@ async def broadcast_status():
     status["paused"] = any(router.is_paused(ch) for ch in room_settings.get("channels", ["general"]))
     data = json.dumps({"type": "status", "data": status})
     dead = set()
-    for client in ws_clients:
+    for client in list(ws_clients):
         try:
             await client.send_text(data)
         except Exception:
@@ -465,7 +603,7 @@ async def broadcast_status():
 async def broadcast_typing(agent_name: str, is_typing: bool):
     data = json.dumps({"type": "typing", "agent": agent_name, "active": is_typing})
     dead = set()
-    for client in ws_clients:
+    for client in list(ws_clients):
         try:
             await client.send_text(data)
         except Exception:
@@ -479,7 +617,7 @@ async def broadcast_clear(channel: str | None = None):
         payload["channel"] = channel
     data = json.dumps(payload)
     dead = set()
-    for client in ws_clients:
+    for client in list(ws_clients):
         try:
             await client.send_text(data)
         except Exception:
@@ -490,7 +628,7 @@ async def broadcast_clear(channel: str | None = None):
 async def broadcast_todo_update(msg_id: int, status: str | None):
     data = json.dumps({"type": "todo_update", "data": {"id": msg_id, "status": status}})
     dead = set()
-    for client in ws_clients:
+    for client in list(ws_clients):
         try:
             await client.send_text(data)
         except Exception:
@@ -501,7 +639,7 @@ async def broadcast_todo_update(msg_id: int, status: str | None):
 async def broadcast_settings():
     data = json.dumps({"type": "settings", "data": room_settings})
     dead = set()
-    for client in ws_clients:
+    for client in list(ws_clients):
         try:
             await client.send_text(data)
         except Exception:
@@ -512,7 +650,7 @@ async def broadcast_settings():
 async def broadcast_decision(action: str, decision: dict):
     data = json.dumps({"type": "decision", "action": action, "data": decision})
     dead = set()
-    for client in ws_clients:
+    for client in list(ws_clients):
         try:
             await client.send_text(data)
         except Exception:
@@ -523,12 +661,40 @@ async def broadcast_decision(action: str, decision: dict):
 async def broadcast_hats():
     data = json.dumps({"type": "hats", "data": agent_hats})
     dead = set()
-    for client in ws_clients:
+    for client in list(ws_clients):
         try:
             await client.send_text(data)
         except Exception:
             dead.add(client)
     ws_clients.difference_update(dead)
+
+
+async def broadcast_agents():
+    """Send updated agent config (from registry) to all WebSocket clients."""
+    agent_cfg = registry.get_agent_config() if registry else {}
+    data = json.dumps({"type": "agents", "data": agent_cfg})
+    dead = set()
+    for client in list(ws_clients):
+        try:
+            await client.send_text(data)
+        except Exception:
+            dead.add(client)
+    ws_clients.difference_update(dead)
+
+
+def _on_registry_change():
+    """Called from registry (any thread) when instances register/deregister/claim/rename."""
+    # Update router with current agent names (base names + registered instances)
+    if router and registry:
+        base_names = list(registry.get_bases().keys())
+        # Only include active instances in routing (pending ones are inert)
+        instance_names = registry.get_active_names()
+        all_names = list(set(base_names + instance_names))
+        router.update_agents(all_names)
+    # Broadcast to WebSocket clients
+    if _event_loop:
+        asyncio.run_coroutine_threadsafe(broadcast_agents(), _event_loop)
+        asyncio.run_coroutine_threadsafe(broadcast_status(), _event_loop)
 
 
 # --- WebSocket ---
@@ -547,12 +713,15 @@ async def websocket_endpoint(websocket: WebSocket):
     # Send settings
     await websocket.send_text(json.dumps({"type": "settings", "data": room_settings}))
 
-    # Send agent config (names, colors, labels) so UI can build pills + color mentions
-    agent_cfg = {
-        name: {"color": cfg.get("color", "#888"), "label": cfg.get("label", name)}
-        for name, cfg in config.get("agents", {}).items()
-    }
+    # Send registered instances (used for pills/mentions)
+    agent_cfg = registry.get_agent_config() if registry else {}
     await websocket.send_text(json.dumps({"type": "agents", "data": agent_cfg}))
+
+    # Send base agent colors (used for message coloring, no pills)
+    base_colors = {}
+    for name, cfg in config.get("agents", {}).items():
+        base_colors[name] = {"color": cfg.get("color", "#888"), "label": cfg.get("label", name)}
+    await websocket.send_text(json.dumps({"type": "base_colors", "data": base_colors}))
 
     # Send todos {msg_id: status}
     await websocket.send_text(json.dumps({"type": "todos", "data": store.get_todos()}))
@@ -562,6 +731,18 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # Send hats
     await websocket.send_text(json.dumps({"type": "hats", "data": agent_hats}))
+
+    # Send pending instances (so late-connecting browsers still see the naming lightbox)
+    if registry:
+        for inst in registry.get_all().values():
+            if inst.get("state") == "pending":
+                await websocket.send_text(json.dumps({
+                    "type": "pending_instance",
+                    "name": inst["name"],
+                    "base": inst.get("base", ""),
+                    "label": inst.get("label", inst["name"]),
+                    "color": inst.get("color", "#888"),
+                }))
 
     # Send history (per channel based on history_limit)
     limit_val = room_settings.get("history_limit", "all")
@@ -626,7 +807,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     if deleted:
                         data = json.dumps({"type": "delete", "ids": deleted})
                         dead = set()
-                        for client in ws_clients:
+                        for client in list(ws_clients):
                             try:
                                 await client.send_text(data)
                             except Exception:
@@ -727,6 +908,76 @@ async def websocket_endpoint(websocket: WebSocket):
                             pass
                 _save_settings()
                 await broadcast_settings()
+
+            elif event.get("type") == "rename_agent":
+                agent_name = (event.get("name") or "").strip()
+                new_label = (event.get("label") or "").strip()
+                if agent_name and new_label and registry:
+                    # Derive a sanitized sender ID from the label
+                    import re as _re
+                    new_id = _re.sub(r'[^a-z0-9-]', '', new_label.lower().replace(' ', '-')).strip('-')
+                    if not new_id:
+                        new_id = agent_name  # fallback: keep old name, just change label
+                    if new_id == agent_name:
+                        # Same ID — label-only change
+                        registry.set_label(agent_name, new_label)
+                    else:
+                        result = registry.rename(agent_name, new_id, new_label)
+                        if isinstance(result, str):
+                            # Rename failed (collision etc.) — fall back to label-only
+                            registry.set_label(agent_name, new_label)
+                        else:
+                            # Migrate presence + cursors to new name
+                            import mcp_bridge
+                            mcp_bridge.migrate_identity(agent_name, new_id)
+                            # Update sender on all historical messages
+                            store.rename_sender(agent_name, new_id)
+                            # Notify clients so they can update sender in DOM
+                            rename_event = json.dumps({
+                                "type": "agent_renamed",
+                                "old_name": agent_name,
+                                "new_name": new_id,
+                            })
+                            await _broadcast(rename_event)
+                continue
+
+            elif event.get("type") == "name_pending":
+                # Human names a pending instance (from lightbox)
+                agent_name = (event.get("name") or "").strip()
+                new_label = (event.get("label") or "").strip()
+                if agent_name and registry:
+                    if not new_label:
+                        # Accept default name
+                        registry.confirm_pending(agent_name)
+                    else:
+                        import re as _re
+                        new_id = _re.sub(r'[^a-z0-9-]', '', new_label.lower().replace(' ', '-')).strip('-')
+                        if not new_id:
+                            new_id = agent_name
+                        if new_id == agent_name:
+                            # Same ID — just update label and confirm
+                            registry.set_label(agent_name, new_label)
+                            registry.confirm_pending(agent_name)
+                        else:
+                            result = registry.rename(agent_name, new_id, new_label)
+                            if isinstance(result, str):
+                                # Rename failed — just confirm with label
+                                registry.set_label(agent_name, new_label)
+                                registry.confirm_pending(agent_name)
+                            else:
+                                # Rename succeeded — confirm new name
+                                registry.confirm_pending(new_id)
+                                import mcp_bridge
+                                mcp_bridge.migrate_identity(agent_name, new_id)
+                                # Update sender on all historical messages
+                                store.rename_sender(agent_name, new_id)
+                                rename_event = json.dumps({
+                                    "type": "agent_renamed",
+                                    "old_name": agent_name,
+                                    "new_name": new_id,
+                                })
+                                await _broadcast(rename_event)
+                continue
 
             elif event.get("type") == "channel_create":
                 name = (event.get("name") or "").strip().lower()
@@ -847,20 +1098,168 @@ async def delete_hat(agent_name: str):
     return JSONResponse({"ok": True})
 
 
-@app.post("/api/heartbeat/{agent_name}")
-async def heartbeat(agent_name: str, request: Request):
-    """Wrapper calls this to keep presence alive and report activity."""
+@app.post("/api/register")
+async def register_agent(request: Request):
+    """Wrapper calls this to register a new agent instance."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    base = body.get("base", "")
+    label = body.get("label")
+    if not base:
+        return JSONResponse({"error": "base is required"}, status_code=400)
+    result = registry.register(base, label)
+    if result is None:
+        return JSONResponse({"error": f"unknown base: {base}"}, status_code=400)
+    # Touch presence so the instance doesn't immediately time out
     import mcp_bridge
     with mcp_bridge._presence_lock:
-        mcp_bridge._presence[agent_name] = __import__("time").time()
+        mcp_bridge._presence[result["name"]] = __import__("time").time()
+    # If slot 1 was renamed (e.g. "claude" → "claude-1"), migrate state
+    renamed = result.pop("_renamed_slot1", None)
+    if renamed:
+        mcp_bridge.migrate_identity(renamed["old"], renamed["new"])
+        store.rename_sender(renamed["old"], renamed["new"])
+        if _event_loop:
+            rename_event = json.dumps({
+                "type": "agent_renamed",
+                "old_name": renamed["old"],
+                "new_name": renamed["new"],
+            })
+            asyncio.run_coroutine_threadsafe(_broadcast(rename_event), _event_loop)
+    # Broadcast pending_instance event so UI can show naming lightbox
+    if result.get("state") == "pending" and _event_loop:
+        pending_event = json.dumps({
+            "type": "pending_instance",
+            "name": result["name"],
+            "base": base,
+            "label": result.get("label", result["name"]),
+            "color": result.get("color", "#888"),
+        })
+        asyncio.run_coroutine_threadsafe(_broadcast(pending_event), _event_loop)
+    return JSONResponse(result)
+
+
+@app.post("/api/deregister/{name}")
+async def deregister_agent(name: str, request: Request):
+    """Wrapper calls this on shutdown to remove its instance."""
+    auth_inst = _resolve_authenticated_agent(request)
+    presented_token = _extract_agent_token(request)
+    if presented_token and not auth_inst:
+        return JSONResponse({"error": "stale_session"}, status_code=409)
+    if auth_inst:
+        name = auth_inst["name"]
+    elif registry and registry.is_agent_family(name):
+        return JSONResponse({"error": "authenticated agent session required"}, status_code=403)
+
+    result = registry.deregister(name)
+    if result is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    # Clean up runtime state (presence, activity, cursors, rename chains)
+    import mcp_bridge
+    mcp_bridge.purge_identity(name)
+    registry.clean_renames_for(name)
+    # If the remaining instance was renamed back (e.g. "claude-1" → "claude"), migrate state
+    renamed = result.pop("_renamed_back", None)
+    if renamed:
+        mcp_bridge.migrate_identity(renamed["old"], renamed["new"])
+        store.rename_sender(renamed["old"], renamed["new"])
+        if _event_loop:
+            rename_event = json.dumps({
+                "type": "agent_renamed",
+                "old_name": renamed["old"],
+                "new_name": renamed["new"],
+            })
+            asyncio.run_coroutine_threadsafe(_broadcast(rename_event), _event_loop)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/label/{name}")
+async def rename_agent_label(name: str, request: Request):
+    """Rename an agent (human-initiated from UI). Changes identity + label."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    label = body.get("label", "").strip()
+    if not label:
+        return JSONResponse({"error": "label is required"}, status_code=400)
+
+    import re as _re
+    new_id = _re.sub(r'[^a-z0-9-]', '', label.lower().replace(' ', '-')).strip('-')
+    if not new_id:
+        new_id = name
+
+    if new_id == name:
+        # Same ID — label-only change
+        if registry.set_label(name, label):
+            return JSONResponse({"ok": True})
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    result = registry.rename(name, new_id, label)
+    if isinstance(result, str):
+        # Rename failed — try label-only as fallback
+        if registry.set_label(name, label):
+            return JSONResponse({"ok": True, "warning": result})
+        return JSONResponse({"error": result}, status_code=400)
+
+    import mcp_bridge
+    mcp_bridge.migrate_identity(name, new_id)
+    # Update sender on all historical messages
+    store.rename_sender(name, new_id)
+    return JSONResponse({"ok": True, "new_name": new_id})
+
+
+@app.post("/api/heartbeat/{agent_name}")
+async def heartbeat(agent_name: str, request: Request):
+    """Wrapper calls this to keep presence alive and report activity.
+
+    Returns the canonical name from the registry so the wrapper can
+    detect renames (e.g. claim renamed 'claude-2' to 'claude-music').
+    """
+    import mcp_bridge
+    auth_inst = _resolve_authenticated_agent(request)
+    presented_token = _extract_agent_token(request)
+    if presented_token and not auth_inst:
+        return JSONResponse({"error": "stale_session"}, status_code=409)
+    if registry and registry.is_agent_family(agent_name) and not auth_inst:
+        return JSONResponse({"error": "authenticated agent session required"}, status_code=403)
+
+    current_name = auth_inst["name"] if auth_inst else agent_name
+    with mcp_bridge._presence_lock:
+        mcp_bridge._presence[current_name] = __import__("time").time()
     # Optional activity report from wrapper's terminal monitor
     try:
         body = await request.json()
         if "active" in body:
-            mcp_bridge.set_active(agent_name, bool(body["active"]))
+            mcp_bridge.set_active(current_name, bool(body["active"]))
     except Exception:
         pass  # No body = plain heartbeat
-    return {"ok": True}
+    # Return canonical name so wrapper can track renames
+    resp = {"ok": True, "name": current_name}
+    if registry:
+        # Follow rename chain (e.g. claude-2 was renamed to claude-music)
+        canonical = registry.resolve_name(current_name)
+        inst = registry.get_instance(canonical)
+        # If rename chain didn't help, try family-based lookup
+        # (handles case where _renames was cleared by server restart but
+        # the instance was claimed/renamed via MCP)
+        if not inst:
+            base = current_name.split("-")[0] if "-" in current_name else current_name
+            family_inst = registry.get_family_instance(base)
+            if family_inst:
+                inst = family_inst
+                canonical = inst["name"]
+        if inst:
+            resp["name"] = inst["name"]
+            resp["pending"] = inst.get("state") == "pending"
+            # Also update presence under the canonical name
+            if canonical != current_name:
+                now = __import__("time").time()
+                with mcp_bridge._presence_lock:
+                    mcp_bridge._presence[canonical] = now
+    return resp
 
 
 # --- Open agent session in terminal ---

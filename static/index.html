@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>agentchattr</title>
-    <link rel="stylesheet" href="/static/style.css?v=32">
+    <link rel="stylesheet" href="/static/style.css?v=34">
     <link rel="icon" href="/static/favicon.ico">
 </head>
 <body>
@@ -126,6 +126,7 @@
         <footer>
             <div id="mention-toggles"></div>
             <div id="slash-menu" class="hidden"></div>
+            <div id="mention-menu" class="hidden"></div>
             <div id="attachments"></div>
             <div id="input-row">
                 <span id="sender-label" class="sender-label">user</span>
@@ -144,7 +145,7 @@
                 <button id="send" onclick="sendMessage()">Send</button>
             </div>
             <div class="input-hint">
-                Enter to send &middot; Shift+Enter for newline &middot; Paste/drop images &middot; Mic for voice &middot; Type / for slash commands
+                Enter to send &middot; Shift+Enter for newline &middot; Paste/drop images &middot; Mic for voice &middot; Type / or @ for autocomplete
             </div>
         </footer>
     </div>
@@ -154,7 +155,7 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/chat.js?v=29"></script>
+    <script src="/static/chat.js?v=32"></script>
 </body>
 </html>
 

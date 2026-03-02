@@ -9,7 +9,8 @@ let pendingAttachments = [];
 let autoScroll = true;
 let reconnectTimer = null;
 let username = 'user';
-let agentConfig = {};  // { name: { color, label } } — populated from server
+let agentConfig = {};  // { name: { color, label } } — registered instances (used for pills)
+let baseColors = {};   // { name: { color, label } } — base agent colors (for message coloring)
 let todos = {};  // { msg_id: "todo" | "done" }
 let decisions = [];  // array of decision objects from server
 let activeMentions = new Set();  // agent names with pre-@ toggled on
@@ -22,6 +23,23 @@ let activeChannel = localStorage.getItem('agentchattr-channel') || 'general';
 let channelList = ['general'];
 let channelUnread = {};  // { channelName: count }
 let agentHats = {};  // { agent_name: svg_string }
+
+// --- Drag-scroll for overflow containers ---
+function enableDragScroll(el) {
+    let isDown = false, startX, scrollLeft;
+    el.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;  // left-click only
+        isDown = true; startX = e.pageX - el.offsetLeft; scrollLeft = el.scrollLeft;
+        el.style.cursor = 'grabbing';
+    });
+    el.addEventListener('mouseleave', () => { isDown = false; el.style.cursor = ''; });
+    el.addEventListener('mouseup', () => { isDown = false; el.style.cursor = ''; });
+    el.addEventListener('mousemove', e => {
+        if (!isDown) return;
+        e.preventDefault();
+        el.scrollLeft = scrollLeft - (e.pageX - el.offsetLeft - startX);
+    });
+}
 
 // --- Notification sounds ---
 const SOUND_OPTIONS = [
@@ -100,10 +118,6 @@ function buildSoundSettings() {
     }
 }
 
-function saveSoundPrefs() {
-    localStorage.setItem('agentchattr-sounds', JSON.stringify(soundPrefs));
-}
-
 // Real brand logo SVGs from Bootstrap Icons (MIT licensed)
 const BRAND_AVATARS = {
     claude: `<svg viewBox="0 0 16 16" fill="white"><path d="m3.127 10.604 3.135-1.76.053-.153-.053-.085H6.11l-.525-.032-1.791-.048-1.554-.065-1.505-.08-.38-.081L0 7.832l.036-.234.32-.214.455.04 1.009.069 1.513.105 1.097.064 1.626.17h.259l.036-.105-.089-.065-.068-.064-1.566-1.062-1.695-1.121-.887-.646-.48-.327-.243-.306-.104-.67.435-.48.585.04.15.04.593.456 1.267.981 1.654 1.218.242.202.097-.068.012-.049-.109-.181-.9-1.626-.96-1.655-.428-.686-.113-.411a2 2 0 0 1-.068-.484l.496-.674L4.446 0l.662.089.279.242.411.94.666 1.48 1.033 2.014.302.597.162.553.06.17h.105v-.097l.085-1.134.157-1.392.154-1.792.052-.504.25-.605.497-.327.387.186.319.456-.045.294-.19 1.23-.37 1.93-.243 1.29h.142l.161-.16.654-.868 1.097-1.372.484-.545.565-.601.363-.287h.686l.505.751-.226.775-.707.895-.585.759-.839 1.13-.524.904.048.072.125-.012 1.897-.403 1.024-.186 1.223-.21.553.258.06.263-.218.536-1.307.323-1.533.307-2.284.54-.028.02.032.04 1.029.098.44.024h1.077l2.005.15.525.346.315.424-.053.323-.807.411-3.631-.863-.872-.218h-.12v.073l.726.71 1.331 1.202 1.667 1.55.084.383-.214.302-.226-.032-1.464-1.101-.565-.497-1.28-1.077h-.084v.113l.295.432 1.557 2.34.08.718-.112.234-.404.141-.444-.08-.911-1.28-.94-1.44-.759-1.291-.093.053-.448 4.821-.21.246-.484.186-.403-.307-.214-.496.214-.98.258-1.28.21-1.016.19-1.263.112-.42-.008-.028-.092.012-.953 1.307-1.448 1.957-1.146 1.227-.274.109-.477-.247.045-.44.266-.39 1.586-2.018.956-1.25.617-.723-.004-.105h-.036l-4.212 2.736-.75.096-.324-.302.04-.496.154-.162 1.267-.871z"/></svg>`,
@@ -113,8 +127,22 @@ const BRAND_AVATARS = {
 const USER_AVATAR = `<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="12" r="5" fill="white" opacity="0.85"/><path d="M7 27C7 21.5 11 18 16 18C21 18 25 21.5 25 27" fill="white" opacity="0.85"/></svg>`;
 
 function getAvatarSvg(sender) {
-    const resolved = resolveAgent(sender.toLowerCase());
-    if (resolved && BRAND_AVATARS[resolved]) return BRAND_AVATARS[resolved];
+    const s = sender.toLowerCase();
+    const resolved = resolveAgent(s);
+    if (resolved) {
+        if (BRAND_AVATARS[resolved]) return BRAND_AVATARS[resolved];
+        // Use base field from agent config (handles custom names like "claudeypops" → claude)
+        const cfg = agentConfig[resolved];
+        if (cfg && cfg.base && BRAND_AVATARS[cfg.base]) return BRAND_AVATARS[cfg.base];
+        // Fallback: parse base-N pattern (claude-2 → claude)
+        const base = resolved.replace(/-\d+$/, '');
+        if (base !== resolved && BRAND_AVATARS[base]) return BRAND_AVATARS[base];
+    }
+    // Fall back for offline agents: check config base, then parse pattern
+    const cfg = agentConfig[s];
+    if (cfg && cfg.base && BRAND_AVATARS[cfg.base]) return BRAND_AVATARS[cfg.base];
+    const base = s.replace(/-\d+$/, '');
+    if (BRAND_AVATARS[base]) return BRAND_AVATARS[base];
     return USER_AVATAR;
 }
 
@@ -171,10 +199,13 @@ function renderMarkdown(text) {
 }
 
 function linkifyUrls(html) {
-    // Match http/https URLs not already inside an href or tag
-    return html.replace(/(?<!["=])(https?:\/\/[^\s<>"')\]]+)/g, (match) => {
-        // Don't double-wrap if already inside an <a> tag
-        return `<a href="${match}" target="_blank" rel="noopener">${match}</a>`;
+    // Match http/https URLs not already inside an <a> tag.
+    // We match tags first to skip them, then capture URLs in the same pass.
+    return html.replace(/<a\b[^>]*>.*?<\/a>|(?<!["=])(https?:\/\/[^\s<>"')\]]+)/gs, (match, url) => {
+        if (url) {
+            return `<a href="${url}" target="_blank" rel="noopener">${url}</a>`;
+        }
+        return match;
     });
 }
 
@@ -261,8 +292,65 @@ function connectWebSocket() {
                 playNotificationSound(event.data.sender);
             }
             appendMessage(event.data);
+        } else if (event.type === 'agent_renamed') {
+            // Migrate active mentions before the agents config rebuild
+            if (activeMentions.has(event.old_name)) {
+                activeMentions.delete(event.old_name);
+                activeMentions.add(event.new_name);
+            }
+            // Update sender name, color, and avatar on all existing messages in the DOM
+            const newColor = getColor(event.new_name);
+            const newAvatar = getAvatarSvg(event.new_name);
+            const newAgentKey = (resolveAgent(event.new_name.toLowerCase()) || event.new_name).toLowerCase();
+            const newHat = agentHats[newAgentKey] || '';
+            document.querySelectorAll('#messages .message').forEach(el => {
+                // Regular chat messages
+                const senderEl = el.querySelector('.msg-sender');
+                if (senderEl && senderEl.textContent === event.old_name) {
+
+                    senderEl.textContent = event.new_name;
+                    senderEl.style.color = newColor;
+                    // Update bubble accent color
+                    const bubble = el.querySelector('.chat-bubble');
+                    if (bubble) bubble.style.setProperty('--bubble-color', newColor);
+                    // Update avatar
+                    const avatarWrap = el.querySelector('.avatar-wrap');
+                    if (avatarWrap) {
+                        avatarWrap.dataset.agent = newAgentKey;
+                        const avatar = avatarWrap.querySelector('.avatar');
+                        if (avatar) {
+                            avatar.style.backgroundColor = newColor;
+                            avatar.innerHTML = newAvatar;
+                        }
+                        // Update hat
+                        let hatEl = avatarWrap.querySelector('.hat-overlay');
+                        if (newHat) {
+                            if (!hatEl) {
+                                hatEl = document.createElement('div');
+                                hatEl.className = 'hat-overlay';
+                                avatarWrap.appendChild(hatEl);
+                            }
+                            hatEl.dataset.agent = newAgentKey;
+                            hatEl.innerHTML = newHat;
+                        } else if (hatEl) {
+                            hatEl.remove();
+                        }
+                    }
+                }
+                // Join/leave messages (separate structure, no .msg-sender)
+                const joinText = el.querySelector('.join-text strong');
+                if (joinText && joinText.textContent === event.old_name) {
+
+                    joinText.textContent = event.new_name;
+                    joinText.style.color = newColor;
+                    const joinDot = el.querySelector('.join-dot');
+                    if (joinDot) joinDot.style.background = newColor;
+                }
+            });
         } else if (event.type === 'agents') {
             applyAgentConfig(event.data);
+        } else if (event.type === 'base_colors') {
+            baseColors = event.data || {};
         } else if (event.type === 'todos') {
             todos = {};
             for (const [id, status] of Object.entries(event.data)) {
@@ -301,6 +389,15 @@ function connectWebSocket() {
         } else if (event.type === 'hats') {
             agentHats = event.data || {};
             updateAllHats();
+        } else if (event.type === 'pending_instance') {
+            // A new 2nd+ instance registered — queue naming lightbox
+            _pendingNameQueue.push({
+                name: event.name,
+                label: event.label || event.name,
+                color: event.color || '#888',
+                base: event.base || '',
+            });
+            _showNextPendingName();
         } else if (event.type === 'channel_renamed') {
             // Migrate data-channel on existing DOM elements
             const container = document.getElementById('messages');
@@ -466,7 +563,7 @@ function appendMessage(msg) {
 
         const statusLabel = todoStatusLabel(todoStatus);
         el.dataset.rawText = msg.text;
-        el.innerHTML = `<div class="todo-strip"></div>${isSelf ? '' : avatarHtml}<div class="chat-bubble" style="--bubble-color: ${senderColor}">${replyHtml}<div class="bubble-header"><span class="msg-sender" style="color: ${senderColor}">${escapeHtml(msg.sender)}</span><span class="msg-time">${msg.time || ''}</span></div><div class="msg-text">${textHtml}</div>${attachmentsHtml}</div><div class="msg-actions"><button class="reply-btn" onclick="startReply(${msg.id}, event)">reply</button><button class="todo-hint" onclick="todoCycle(${msg.id}); event.stopPropagation();">${statusLabel}</button><button class="delete-btn" onclick="deleteClick(${msg.id}, event)" title="Delete">del</button></div>`;
+        el.innerHTML = `<div class="todo-strip"></div>${isSelf ? '' : avatarHtml}<div class="chat-bubble" style="--bubble-color: ${senderColor}">${replyHtml}<div class="bubble-header"><span class="msg-sender" style="color: ${senderColor}">${escapeHtml(msg.sender)}</span><span class="msg-time">${msg.time || ''}</span></div><div class="msg-text">${textHtml}</div>${attachmentsHtml}<button class="bubble-copy" onclick="copyMessage(${msg.id}, event)" title="Copy message"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><div class="msg-actions"><button class="reply-btn" onclick="startReply(${msg.id}, event)">reply</button><button class="todo-hint" onclick="todoCycle(${msg.id}); event.stopPropagation();">${statusLabel}</button><button class="delete-btn" onclick="deleteClick(${msg.id}, event)" title="Delete">del</button></div>`;
         if (todoStatus) el.classList.add('msg-todo', `msg-todo-${todoStatus}`);
 
         // Add copy buttons to code blocks
@@ -499,6 +596,9 @@ function getSenderClass(sender) {
     const s = sender.toLowerCase();
     if (s === 'system') return 'system';
     if (resolveAgent(s)) return 'agent';
+    // Check base colors for offline agents
+    const base = s.replace(/-\d+$/, '');
+    if (base in baseColors) return 'agent';
     return 'user';
 }
 
@@ -517,6 +617,9 @@ function getColor(sender) {
     if (s === 'system') return 'var(--system-color)';
     const resolved = resolveAgent(s);
     if (resolved) return agentConfig[resolved].color;
+    // Fall back to base agent colors (for historical messages from offline agents)
+    const base = s.replace(/-\d+$/, '');
+    if (base in baseColors) return baseColors[base].color;
     return 'var(--user-color)';
 }
 
@@ -752,11 +855,133 @@ function buildStatusPills() {
     for (const [name, cfg] of Object.entries(agentConfig)) {
         const pill = document.createElement('div');
         pill.className = 'status-pill';
+        if (cfg.state === 'pending') pill.classList.add('pending');
         pill.id = `status-${name}`;
+        pill.title = `@${name}`;  // Tooltip: canonical name for manual @-typing
         pill.style.setProperty('--agent-color', cfg.color || '#4ade80');
         pill.innerHTML = `<span class="status-dot"></span><span class="status-label">${escapeHtml(cfg.label || name)}</span>`;
+        // Left-click to rename or name pending instance
+        pill.addEventListener('click', () => {
+            const mode = cfg.state === 'pending' ? 'pending' : 'rename';
+            showAgentNameModal({
+                name, label: cfg.label || name, color: cfg.color || '#888',
+                base: cfg.base || '', mode,
+            });
+        });
         container.appendChild(pill);
     }
+    enableDragScroll(container);
+}
+
+// --- Agent naming lightbox ---
+
+const _pendingNameQueue = [];
+let _nameModalActive = false;
+
+function _showNextPendingName() {
+    if (_nameModalActive || _pendingNameQueue.length === 0) return;
+    const next = _pendingNameQueue.shift();
+    // Only show if still pending in agentConfig
+    const cfg = agentConfig[next.name];
+    if (cfg && cfg.state === 'pending') {
+        showAgentNameModal({ ...next, mode: 'pending' });
+    } else {
+        _showNextPendingName(); // skip stale entries
+    }
+}
+
+function showAgentNameModal(opts) {
+    // opts: { name, label, color, base, mode: 'pending' | 'rename' }
+    _nameModalActive = true;
+    let modal = document.getElementById('agent-name-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'agent-name-modal';
+        modal.className = 'agent-name-modal hidden';
+        modal.innerHTML = `
+            <div class="agent-name-dialog">
+                <div class="agent-name-header">
+                    <div class="agent-name-avatar"></div>
+                    <h3 class="agent-name-title"></h3>
+                </div>
+                <p class="agent-name-subtitle"></p>
+                <input type="text" class="agent-name-input" maxlength="24" spellcheck="false" autocomplete="off" />
+                <div class="agent-name-actions">
+                    <button class="agent-name-cancel">Cancel</button>
+                    <button class="agent-name-confirm">Confirm</button>
+                </div>
+            </div>`;
+        // Close on backdrop click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) _closeAgentNameModal();
+        });
+        document.body.appendChild(modal);
+    }
+
+    const avatarEl = modal.querySelector('.agent-name-avatar');
+    const titleEl = modal.querySelector('.agent-name-title');
+    const subtitleEl = modal.querySelector('.agent-name-subtitle');
+    const inputEl = modal.querySelector('.agent-name-input');
+    const cancelBtn = modal.querySelector('.agent-name-cancel');
+    const confirmBtn = modal.querySelector('.agent-name-confirm');
+
+    // Set agent color accent
+    modal.style.setProperty('--agent-color', opts.color);
+
+    // Avatar from brand
+    const brandKey = opts.base || opts.name.replace(/-\d+$/, '');
+    avatarEl.innerHTML = BRAND_AVATARS[brandKey] || USER_AVATAR;
+    avatarEl.style.background = opts.color;
+
+    if (opts.mode === 'pending') {
+        const familyLabel = (baseColors[opts.base] || {}).label || opts.base || 'agent';
+        titleEl.textContent = 'Name this agent';
+        subtitleEl.textContent = `A new ${familyLabel} instance connected`;
+    } else {
+        titleEl.textContent = 'Rename agent';
+        subtitleEl.textContent = `Current ID: @${opts.name}`;
+    }
+
+    inputEl.value = opts.label;
+    inputEl.placeholder = opts.label;
+
+    // Remove old listeners by cloning
+    const newCancel = cancelBtn.cloneNode(true);
+    cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
+    const newConfirm = confirmBtn.cloneNode(true);
+    confirmBtn.parentNode.replaceChild(newConfirm, confirmBtn);
+
+    newCancel.addEventListener('click', () => _closeAgentNameModal());
+    newConfirm.addEventListener('click', () => {
+        const label = inputEl.value.trim();
+        if (!label) return;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            if (opts.mode === 'pending') {
+                ws.send(JSON.stringify({ type: 'name_pending', name: opts.name, label }));
+            } else {
+                ws.send(JSON.stringify({ type: 'rename_agent', name: opts.name, label }));
+            }
+        }
+        _closeAgentNameModal();
+    });
+
+    // Enter key confirms
+    inputEl.onkeydown = (e) => {
+        if (e.key === 'Enter') { newConfirm.click(); e.preventDefault(); }
+        if (e.key === 'Escape') { _closeAgentNameModal(); e.preventDefault(); }
+    };
+
+    modal.classList.remove('hidden');
+    // Focus and select input text after animation frame
+    requestAnimationFrame(() => { inputEl.focus(); inputEl.select(); });
+}
+
+function _closeAgentNameModal() {
+    const modal = document.getElementById('agent-name-modal');
+    if (modal) modal.classList.add('hidden');
+    _nameModalActive = false;
+    // Show next pending if queued
+    setTimeout(_showNextPendingName, 200);
 }
 
 // --- Status ---
@@ -768,12 +993,15 @@ function updateStatus(data) {
         if (!pill) continue;
 
         pill.classList.remove('available', 'working', 'offline');
-        if (info.busy && info.available) {
-            pill.classList.add('working');
-        } else if (info.available) {
-            pill.classList.add('available');
-        } else {
-            pill.classList.add('offline');
+        // Pending pills keep their pending animation (set in buildStatusPills)
+        if (!pill.classList.contains('pending')) {
+            if (info.busy && info.available) {
+                pill.classList.add('working');
+            } else if (info.available) {
+                pill.classList.add('available');
+            } else {
+                pill.classList.add('offline');
+            }
         }
 
         // Keep agent color in sync
@@ -920,6 +1148,8 @@ function setupKeyboardShortcuts() {
         const modalOpen = modal && !modal.classList.contains('hidden');
 
         if (e.key === 'Escape') {
+            const nameModal = document.getElementById('agent-name-modal');
+            if (nameModal && !nameModal.classList.contains('hidden')) { _closeAgentNameModal(); return; }
             if (modalOpen) { closeImageModal(); return; }
             if (replyingTo) { cancelReply(); }
         }
@@ -944,6 +1174,9 @@ const SLASH_COMMANDS = [
 
 let slashMenuIndex = 0;
 let slashMenuVisible = false;
+let mentionMenuIndex = 0;
+let mentionMenuVisible = false;
+let mentionMenuStart = -1;  // cursor position of the '@'
 
 function updateSlashMenu(text) {
     const menu = document.getElementById('slash-menu');
@@ -992,12 +1225,137 @@ function selectSlashCommand(cmd) {
     slashMenuVisible = false;
 }
 
+// --- Mention autocomplete ---
+
+function getMentionCandidates() {
+    // Build list: registered agents + "all agents" + username (self) + known humans
+    const candidates = [];
+    for (const [name, cfg] of Object.entries(agentConfig)) {
+        if (cfg.state === 'pending') continue;
+        candidates.push({ name, label: cfg.label || name, color: cfg.color });
+    }
+    candidates.push({ name: 'all agents', label: 'all agents', color: 'var(--accent)' });
+    return candidates;
+}
+
+function updateMentionMenu() {
+    const menu = document.getElementById('mention-menu');
+    const input = document.getElementById('input');
+    const text = input.value;
+    const cursor = input.selectionStart;
+
+    // Don't show if slash menu is active
+    if (slashMenuVisible) {
+        menu.classList.add('hidden');
+        mentionMenuVisible = false;
+        return;
+    }
+
+    // Find the '@' before cursor that starts this mention
+    let atPos = -1;
+    for (let i = cursor - 1; i >= 0; i--) {
+        if (text[i] === '@') { atPos = i; break; }
+        // Allow spaces if we are still matching a multi-word label like "all agents"
+        if (!/[\w\-\s]/.test(text[i])) break;
+        // Optimization: don't look back more than 30 chars
+        if (cursor - i > 30) break;
+    }
+
+    if (atPos < 0 || (atPos > 0 && /\w/.test(text[atPos - 1]))) {
+        // No @ found, or @ is mid-word (e.g. email)
+        menu.classList.add('hidden');
+        mentionMenuVisible = false;
+        return;
+    }
+
+    const query = text.slice(atPos + 1, cursor).toLowerCase();
+    mentionMenuStart = atPos;
+
+    const candidates = getMentionCandidates();
+    const matches = candidates.filter(c =>
+        c.name.toLowerCase().includes(query) || c.label.toLowerCase().includes(query)
+    );
+
+    if (matches.length === 0) {
+        menu.classList.add('hidden');
+        mentionMenuVisible = false;
+        return;
+    }
+
+    menu.innerHTML = '';
+    mentionMenuIndex = Math.min(mentionMenuIndex, matches.length - 1);
+
+    matches.forEach((item, i) => {
+        const row = document.createElement('div');
+        row.className = 'mention-item' + (i === mentionMenuIndex ? ' active' : '');
+        row.dataset.name = item.name;
+        row.innerHTML = `<span class="mention-dot" style="background: ${item.color}"></span><span class="mention-name">${escapeHtml(item.label)}</span>`;
+        row.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            selectMention(item.name);
+        });
+        row.addEventListener('mouseenter', () => {
+            mentionMenuIndex = i;
+            menu.querySelectorAll('.mention-item').forEach((el, j) => el.classList.toggle('active', j === i));
+        });
+        menu.appendChild(row);
+    });
+
+    menu.classList.remove('hidden');
+    mentionMenuVisible = true;
+}
+
+function selectMention(name) {
+    const input = document.getElementById('input');
+    const text = input.value;
+    const cursor = input.selectionStart;
+    // Replace from @ to cursor with @name + space
+    const before = text.slice(0, mentionMenuStart);
+    const after = text.slice(cursor);
+    const mention = `@${name} `;
+    input.value = before + mention + after;
+    const newPos = mentionMenuStart + mention.length;
+    input.setSelectionRange(newPos, newPos);
+    input.focus();
+    document.getElementById('mention-menu').classList.add('hidden');
+    mentionMenuVisible = false;
+}
+
 // --- Input ---
 
 function setupInput() {
     const input = document.getElementById('input');
 
     input.addEventListener('keydown', (e) => {
+        if (mentionMenuVisible) {
+            const menu = document.getElementById('mention-menu');
+            const items = menu.querySelectorAll('.mention-item');
+            if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                mentionMenuIndex = (mentionMenuIndex - 1 + items.length) % items.length;
+                items.forEach((el, i) => el.classList.toggle('active', i === mentionMenuIndex));
+                return;
+            }
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                mentionMenuIndex = (mentionMenuIndex + 1) % items.length;
+                items.forEach((el, i) => el.classList.toggle('active', i === mentionMenuIndex));
+                return;
+            }
+            if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+                e.preventDefault();
+                const active = items[mentionMenuIndex];
+                if (active) {
+                    selectMention(active.dataset.name);
+                }
+                return;
+            }
+            if (e.key === 'Escape') {
+                menu.classList.add('hidden');
+                mentionMenuVisible = false;
+                return;
+            }
+        }
         if (slashMenuVisible) {
             const menu = document.getElementById('slash-menu');
             const items = menu.querySelectorAll('.slash-item');
@@ -1032,11 +1390,12 @@ function setupInput() {
         }
     });
 
-    // Auto-resize + slash menu
+    // Auto-resize + slash menu + mention menu
     input.addEventListener('input', () => {
         input.style.height = 'auto';
         input.style.height = Math.min(input.scrollHeight, 120) + 'px';
         updateSlashMenu(input.value);
+        updateMentionMenu();
     });
 }
 
@@ -1212,6 +1571,20 @@ function setupScroll() {
 }
 
 // --- Reply ---
+
+function copyMessage(msgId, event) {
+    if (event) event.stopPropagation();
+    const el = document.querySelector(`.message[data-id="${msgId}"]`);
+    if (!el) return;
+    const text = el.dataset.rawText || el.querySelector('.msg-text')?.textContent || '';
+    navigator.clipboard.writeText(text).then(() => {
+        const btn = el.querySelector('.bubble-copy');
+        if (btn) {
+            btn.classList.add('copied');
+            setTimeout(() => btn.classList.remove('copied'), 1500);
+        }
+    });
+}
 
 function startReply(msgId, event) {
     if (event) event.stopPropagation();
@@ -1622,13 +1995,37 @@ function renderChannelTabs() {
     }
 }
 
+const _channelScrollMsg = {};  // channel name → message ID at top of viewport
+
+function _getTopVisibleMsgId() {
+    const scroll = document.getElementById('timeline');
+    const container = document.getElementById('messages');
+    if (!scroll || !container) return null;
+    const rect = scroll.getBoundingClientRect();
+    for (const el of container.children) {
+        if (el.style.display === 'none' || !el.dataset.id) continue;
+        const elRect = el.getBoundingClientRect();
+        if (elRect.bottom > rect.top) return el.dataset.id;
+    }
+    return null;
+}
+
 function switchChannel(name) {
     if (name === activeChannel) return;
+    // Save top-visible message ID for current channel
+    const topId = _getTopVisibleMsgId();
+    if (topId) _channelScrollMsg[activeChannel] = topId;
     activeChannel = name;
     channelUnread[name] = 0;
     localStorage.setItem('agentchattr-channel', name);
     filterMessagesByChannel();
     renderChannelTabs();
+    // Restore: scroll to saved message, or bottom if none saved
+    const savedId = _channelScrollMsg[name];
+    if (savedId) {
+        const el = document.querySelector(`.message[data-id="${savedId}"]`);
+        if (el) { el.scrollIntoView({ block: 'start' }); return; }
+    }
     scrollToBottom();
 }
 
@@ -1822,47 +2219,29 @@ function deleteChannel(name) {
     setTimeout(() => document.addEventListener('click', outsideClick), 0);
 }
 
-function showChannelContextMenu(name, x, y) {
-    document.querySelectorAll('.channel-ctx-menu').forEach(m => m.remove());
-
-    const menu = document.createElement('div');
-    menu.className = 'channel-ctx-menu';
-    menu.style.left = x + 'px';
-    menu.style.top = y + 'px';
-
-    const renameBtn = document.createElement('button');
-    renameBtn.textContent = 'Rename';
-    renameBtn.onclick = () => { menu.remove(); showChannelRenameDialog(name); };
-    menu.appendChild(renameBtn);
-
-    const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'danger';
-    deleteBtn.textContent = 'Delete';
-    deleteBtn.onclick = () => { menu.remove(); deleteChannel(name); };
-    menu.appendChild(deleteBtn);
-
-    document.body.appendChild(menu);
-
-    setTimeout(() => {
-        document.addEventListener('click', function handler() {
-            menu.remove();
-            document.removeEventListener('click', handler);
-        }, { once: true });
-    }, 0);
-}
-
 // --- Mention toggles ---
 
 function buildMentionToggles() {
     const container = document.getElementById('mention-toggles');
     container.innerHTML = '';
 
+    // Prune stale mentions for agents no longer in config
+    for (const name of activeMentions) {
+        if (!(name in agentConfig)) activeMentions.delete(name);
+    }
+
     for (const [name, cfg] of Object.entries(agentConfig)) {
+        if (cfg.state === 'pending') continue;  // skip pending instances
         const btn = document.createElement('button');
         btn.className = 'mention-toggle';
         btn.dataset.agent = name;
         btn.textContent = `@${cfg.label || name}`;
+        btn.title = `@${name}`;  // Tooltip: canonical name
         btn.style.setProperty('--agent-color', cfg.color);
+        // Restore active state for mentions that survived the rebuild
+        if (activeMentions.has(name)) {
+            btn.classList.add('active');
+        }
         btn.onclick = () => {
             if (activeMentions.has(name)) {
                 activeMentions.delete(name);
@@ -1874,6 +2253,7 @@ function buildMentionToggles() {
         };
         container.appendChild(btn);
     }
+    enableDragScroll(container);
 }
 
 // --- Voice typing ---

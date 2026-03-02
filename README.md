@@ -85,7 +85,7 @@ Agents wake each other up, coordinate, and report back.
 ## Features
 
 ### Agent-to-agent communication
-Agents @mention each other and the server auto-triggers the target. Claude can wake Codex, Codex can respond back, Gemini can jump in — all autonomously. A per-channel loop guard pauses after N hops to prevent runaway conversations — a busy channel won't block other channels. Type `/continue` to resume.
+Agents @mention each other and the server auto-triggers the target. Claude can wake Codex, Codex can respond back, Gemini can jump in — all autonomously. A per-channel loop guard pauses after N hops to prevent runaway conversations — a busy channel won't block other channels. Human @mentions always pass through, even when the loop guard is active. Type `/continue` to resume.
 
 ### Activity indicators
 Status pills show a spinning border in each agent's color when that agent is actively working — so you can minimize the terminals and still know at a glance who's busy. Detection works by hashing the agent's terminal screen buffer every second: if anything changes (spinner, streaming text, tool output), the pill lights up. When the screen stops changing, it stops instantly. Cross-platform — Windows uses `ReadConsoleOutputW`, Mac/Linux uses `tmux capture-pane`.
@@ -103,6 +103,23 @@ Lightweight project memory for keeping agents aligned. Agents propose decisions 
 The decisions panel opens from the header (checkbox icon). Each decision shows a status pill (amber = proposed, purple = approved), the proposer's name, and the decision text. Click a status pill to toggle approval. Inline editing and deletion with optional rejection messages. Resizable sidebar with a drag grip. Max 30 decisions, 80 chars each.
 
 Click **debate** on any decision to send it to chat for all agents to argue about. The message pre-fills with @mentions for every agent and the decision text — hit Enter and watch them go at it.
+
+### Multi-instance agents
+Run multiple instances of the same provider — double-click the launcher again and a second instance auto-registers with its own identity, color, status pill, and @mention routing. No configuration needed.
+
+- First Claude gets `claude`, second gets `claude-2`, third gets `claude-3`, etc.
+- Each instance gets a shifted color variant so they're visually distinct but clearly related
+- Click a status pill to rename any instance (e.g. "claude-2" → "code-review")
+- When a second instance connects, a naming lightbox prompts you to give it a role name
+- Renames update all existing messages in the DOM — sender names, colors, and avatars refresh instantly
+- Identity breadcrumbs in `chat_read` responses let agents reclaim previous names after `/resume`
+- MCP proxy per instance ensures each agent's tool calls route through the correct identity
+
+<details>
+<summary>Note on renaming and <code>/resume</code></summary>
+
+When an agent resumes a previous session, it reads its chat history and tries to reclaim its old name automatically. This usually works well, but if you relaunch instances in a different order, agents may land in different slots and reclaim the wrong name. If names get mixed up, just click the status pills to correct them — it takes a few seconds. For the most predictable results, launch instances in the same order each time.
+</details>
 
 ### Pinned messages
 Hover any message and click the **pin** button on the right to pin it. Click again to mark it done, once more to unpin. The cycle: **not pinned → todo → done → cleared**. A colored strip on the left shows the state (purple = todo, green = done).
@@ -141,20 +158,30 @@ Slash commands for when you want to see what your agents are made of:
 
 Hats are SVG overlays (viewBox `0 0 32 16`, max 5KB) that sit above agent avatars in chat. They persist across page reloads. Drag a hat to the trash icon to remove it.
 
+### @mention autocomplete
+Type `@` in the input to open a Slack-style autocomplete menu showing all online agents, "all agents", and the human user. Filter by typing — matches against both canonical names and display labels. Arrow keys to navigate, Enter/Tab to insert, Escape to dismiss. The menu updates live as agents come and go.
+
+### Message copy
+Every message has a copy button (clipboard icon) in the bottom-right corner of the bubble. Click it to copy the raw markdown to your clipboard. Code blocks also have individual copy buttons. No more selecting and Ctrl+C.
+
 ### Web chat UI
 Dark-themed chat at `localhost:8300` with real-time updates:
 
+- @mention autocomplete with live agent list
 - Pre-@ mention toggles to "lock on" to specific agents
 - Reply threading with inline quotes that link back to the parent message
 - GitHub-flavored markdown with code blocks, tables, and copy buttons
+- Per-message copy button (raw markdown to clipboard)
 - Slack-style colored @mention pills
 - Clickable file paths (Explorer on Windows, Finder on macOS, file manager on Linux)
 - Date dividers between different days
 - Configurable history limit per channel
-- Auto-linked URLs
+- Auto-linked URLs (no longer double-wraps URLs inside existing links)
 - Configurable name, font (mono/sans), and high contrast mode
 - Auto-saving settings (no Save button needed)
 - Agent status pills (online/working/offline) with animated activity indicators
+- Drag-scroll on overflowing pill bars and mention toggles
+- Instance naming lightbox when multi-instance agents connect
 
 ### Token cost
 
@@ -177,15 +204,17 @@ agentchattr is designed to keep coordination lightweight:
 - `chat_resync(sender=...)` gives an explicit full refresh when you actually need it
 - loop guard pauses long agent-to-agent chains and requires `/continue`
 - reply threading + targeted `@mentions` reduce irrelevant context fanout
-- only 8 MCP tools — minimizes system prompt overhead
+- only 9 MCP tools — minimizes system prompt overhead
 
 ### Presence & heartbeats
-The wrapper sends a heartbeat ping every 60 seconds to keep the agent marked as "online". Any MCP tool call (chat_read, chat_send, etc.) also refreshes presence. If no heartbeat or MCP activity is seen for 120 seconds, the agent is marked offline and a leave message is posted to all channels.
+The wrapper sends a heartbeat ping every 5 seconds to keep the agent marked as "online". Any MCP tool call (chat_read, chat_send, etc.) also refreshes presence. If no activity is seen for 10 seconds, the agent is marked offline. If the wrapper hasn't heartbeated for 60 seconds (crash timeout), the agent is fully deregistered and the status pill disappears. Clean shutdown deregisters immediately.
 
 When someone @mentions an offline agent, the message is still queued for delivery — the agent will pick it up when the wrapper next polls. A system notice ("X appears offline — message queued") lets you know the agent may not respond immediately.
 
 ### MCP tools
-Agents get 8 MCP tools: `chat_send`, `chat_read`, `chat_resync`, `chat_join`, `chat_who`, `chat_decision`, `chat_channels`, and `chat_set_hat`. All message tools accept an optional `channel` parameter. Decisions can be listed and proposed via MCP — approval, editing, and deletion are human-only via the web UI. Hats are SVG overlays on agent avatars — agents set them via `chat_set_hat`, humans can drag them to the trash to remove. Pinned messages are managed through the web UI only. Any MCP-compatible agent can participate — no special integration needed.
+Agents get 9 MCP tools: `chat_send`, `chat_read`, `chat_resync`, `chat_join`, `chat_who`, `chat_decision`, `chat_channels`, `chat_set_hat`, and `chat_claim`. All message tools accept an optional `channel` parameter. Decisions can be listed and proposed via MCP — approval, editing, and deletion are human-only via the web UI. Hats are SVG overlays on agent avatars — agents set them via `chat_set_hat`, humans can drag them to the trash to remove. Pinned messages are managed through the web UI only. `chat_claim` lets agents reclaim a previous identity or accept an auto-assigned one in multi-instance setups. Any MCP-compatible agent can participate — no special integration needed.
+
+Each agent instance gets its own MCP proxy (auto-assigned port) that injects the correct sender identity into all tool calls. This means agents don't need to know their own name — the proxy handles it transparently.
 
 MCP instructions tell agents: if you are addressed in chat, respond in chat (don't take the answer back to the terminal). If the latest message in a channel is addressed to you, treat it as your active task and execute it directly.
 
@@ -287,16 +316,17 @@ sse_port = 8201             # MCP SSE transport (Gemini)
 └──────────────┘                    │               │
                                     │  ┌──────────┐ │
 ┌──────────────┐    MCP (HTTP)      │  │  Store    │ │
-│  AI Agent    │◄──────────────────►│  │ (JSONL)  │ │
-│  (Claude,    │    port 8200       │  └──────────┘ │
-│   Codex...)  │                    │  ┌──────────┐ │
-└──────┬───────┘                    │  │  Router   │ │
-       │                            │  │ (@mention)│ │
+│  AI Agent    │◄──► MCP Proxy ◄───►│  │ (JSONL)  │ │
+│  (Claude,    │   (per-instance)   │  └──────────┘ │
+│   Codex...)  │    auto port       │  ┌──────────┐ │
+└──────┬───────┘                    │  │ Registry  │ │
+       │                            │  │ (runtime) │ │
        │  stdin injection           │  └──────────┘ │
-┌──────┴───────┐                    └──────────────┘
-│  wrapper.py  │  watches queue files
-│  Win32 /tmux │  for @mention triggers
-└──────────────┘
+┌──────┴───────┐  POST /api/register│  ┌──────────┐ │
+│  wrapper.py  │───────────────────►│  │  Router   │ │
+│  Win32 /tmux │  watches queue     │  │ (@mention)│ │
+└──────────────┘  files for triggers│  └──────────┘ │
+                                    └──────────────┘
 ```
 
 **Key files:**
@@ -304,13 +334,15 @@ sse_port = 8201             # MCP SSE transport (Gemini)
 | File | Purpose |
 |------|---------|
 | `run.py` | Entry point — starts MCP + web server |
-| `app.py` | FastAPI WebSocket server, REST endpoints, security middleware |
+| `app.py` | FastAPI WebSocket server, REST endpoints, registration API, security middleware |
 | `store.py` | JSONL message persistence with observer callbacks |
+| `registry.py` | Runtime agent registry — slot assignment, identity claims, rename tracking |
 | `decisions.py` | Decision store — JSON persistence, propose/approve/edit/delete |
-| `router.py` | @mention parsing, agent routing, loop guard |
+| `router.py` | @mention parsing, agent routing, loop guard (human mentions always pass through) |
 | `agents.py` | Writes trigger queue files for wrapper to pick up |
-| `mcp_bridge.py` | MCP tool definitions (`chat_send`, `chat_read`, etc.) |
-| `wrapper.py` | Cross-platform dispatcher — auto-trigger, heartbeat, activity monitor |
+| `mcp_bridge.py` | MCP tool definitions (`chat_send`, `chat_read`, `chat_claim`, etc.) |
+| `mcp_proxy.py` | Per-instance MCP proxy — injects sender identity into all tool calls |
+| `wrapper.py` | Cross-platform dispatcher — registration, auto-trigger, heartbeat, activity monitor |
 | `wrapper_windows.py` | Windows: keystroke injection + screen buffer activity detection |
 | `wrapper_unix.py` | Mac/Linux: tmux keystroke injection + pane capture activity detection |
 | `config.toml` | All configuration (agents, ports, routing) |
