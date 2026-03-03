@@ -1750,7 +1750,7 @@ function copyMessage(msgId, event) {
     if (!el) return;
     const msgText = el.querySelector('.msg-text');
     const html = msgText?.innerHTML || '';
-    const plain = msgText?.innerText || '';
+    const markdown = el.dataset.rawText || msgText?.innerText || '';
     const done = () => {
         const btn = el.querySelector('.bubble-copy');
         if (btn) {
@@ -1758,14 +1758,14 @@ function copyMessage(msgId, event) {
             setTimeout(() => btn.classList.remove('copied'), 1500);
         }
     };
-    // Rich HTML + plain text — works in Google Docs and code editors
+    // Rich HTML + raw markdown — rich editors get HTML, code/markdown editors get source
     if (navigator.clipboard.write) {
         navigator.clipboard.write([new ClipboardItem({
             'text/html': new Blob([html], {type: 'text/html'}),
-            'text/plain': new Blob([plain], {type: 'text/plain'}),
+            'text/plain': new Blob([markdown], {type: 'text/plain'}),
         })]).then(done);
     } else {
-        navigator.clipboard.writeText(plain).then(done);
+        navigator.clipboard.writeText(markdown).then(done);
     }
 }
 
