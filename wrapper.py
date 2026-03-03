@@ -193,7 +193,7 @@ _IDENTITY_HINT = (
 )
 
 
-def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = False):
+def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = False, trigger_flag=None):
     """Poll queue file and inject an MCP read task when triggered."""
     first_mention = True
     while True:
@@ -219,6 +219,9 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
                         channel = data["channel"]
 
                 if has_trigger:
+                    # Signal activity BEFORE injecting — covers the thinking phase
+                    if trigger_flag is not None:
+                        trigger_flag[0] = True
                     time.sleep(0.5)
                     prompt = f"mcp read #{channel} - you were mentioned, take appropriate action"
                     if first_mention and is_multi_instance:
@@ -437,6 +440,7 @@ def main():
     _watcher_inject_fn = None
     _watcher_thread = None
     _is_multi_instance = registration.get("slot", 1) > 1
+    _trigger_flag = [False]  # shared: queue watcher sets True, activity checker reads
 
     def start_watcher(inject_fn):
         nonlocal _watcher_inject_fn, _watcher_thread
@@ -444,7 +448,7 @@ def main():
         _watcher_thread = threading.Thread(
             target=_queue_watcher,
             args=(get_identity, inject_fn),
-            kwargs={"is_multi_instance": _is_multi_instance},
+            kwargs={"is_multi_instance": _is_multi_instance, "trigger_flag": _trigger_flag},
             daemon=True,
         )
         _watcher_thread.start()
@@ -457,7 +461,7 @@ def main():
                 _watcher_thread = threading.Thread(
                     target=_queue_watcher,
                     args=(get_identity, _watcher_inject_fn),
-                    kwargs={"is_multi_instance": _is_multi_instance},
+                    kwargs={"is_multi_instance": _is_multi_instance, "trigger_flag": _trigger_flag},
                     daemon=True,
                 )
                 _watcher_thread.start()
@@ -474,13 +478,31 @@ def main():
 
     def _activity_monitor():
         last_active = None
+        last_report_time = 0
+        REPORT_INTERVAL = 3  # re-send state every 3s while active (keeps server lease fresh)
+        # Debug log for activity reporting
+        import os as _act_os
+        _act_log_path = _act_os.path.join(
+            _act_os.path.dirname(_act_os.path.abspath(__file__)),
+            f"activity_report_{assigned_name}.log",
+        )
+        _act_log = open(_act_log_path, "w")
         while True:
             time.sleep(1)
             if not _activity_checker:
                 continue
             try:
                 active = _activity_checker()
-                if active != last_active:
+                now = time.time()
+                # Send on state change, periodically while active (refresh lease),
+                # or periodically while idle (keep presence alive)
+                IDLE_REPORT_INTERVAL = 8  # keep-alive while idle
+                should_send = (
+                    active != last_active
+                    or (active and now - last_report_time >= REPORT_INTERVAL)
+                    or (not active and now - last_report_time >= IDLE_REPORT_INTERVAL)
+                )
+                if should_send:
                     current_name, _ = get_identity()
                     current_token = get_token()
                     url = f"http://127.0.0.1:{server_port}/api/heartbeat/{current_name}"
@@ -491,10 +513,22 @@ def main():
                         data=body,
                         headers=_auth_headers(current_token, include_json=True),
                     )
-                    urllib.request.urlopen(req, timeout=5)
+                    resp = urllib.request.urlopen(req, timeout=5)
+                    resp_code = resp.getcode()
                     last_active = active
-            except Exception:
-                pass
+                    last_report_time = now
+                    import time as _t2
+                    _act_log.write(
+                        f"[{_t2.strftime('%H:%M:%S')}] SENT active={active} "
+                        f"to={current_name} status={resp_code}\n"
+                    )
+                    _act_log.flush()
+            except Exception as exc:
+                import time as _t2
+                _act_log.write(
+                    f"[{_t2.strftime('%H:%M:%S')}] ERROR: {exc}\n"
+                )
+                _act_log.flush()
 
     threading.Thread(target=_activity_monitor, daemon=True).start()
 
@@ -503,12 +537,12 @@ def main():
     if sys.platform == "win32":
         from wrapper_windows import get_activity_checker, run_agent
 
-        _set_activity_checker(get_activity_checker(_agent_pid))
+        _set_activity_checker(get_activity_checker(_agent_pid, agent_name=assigned_name, trigger_flag=_trigger_flag))
     else:
         from wrapper_unix import get_activity_checker, run_agent
 
         unix_session_name = f"agentchattr-{assigned_name}"
-        _set_activity_checker(get_activity_checker(unix_session_name))
+        _set_activity_checker(get_activity_checker(unix_session_name, trigger_flag=_trigger_flag))
 
     run_kwargs = dict(
         command=command,

@@ -55,11 +55,15 @@ def inject(text: str, *, tmux_session: str):
     )
 
 
-def get_activity_checker(session_name):
+def get_activity_checker(session_name, trigger_flag=None):
     """Return a callable that detects tmux pane output by hashing content."""
     last_hash = [None]
 
     def check():
+        # External trigger: queue watcher injected a message
+        if trigger_flag is not None and trigger_flag[0]:
+            trigger_flag[0] = False
+            return True
         try:
             result = subprocess.run(
                 ["tmux", "capture-pane", "-t", session_name, "-p"],

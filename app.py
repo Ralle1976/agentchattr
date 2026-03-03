@@ -1267,12 +1267,19 @@ async def heartbeat(agent_name: str, request: Request):
     with mcp_bridge._presence_lock:
         mcp_bridge._presence[current_name] = __import__("time").time()
     # Optional activity report from wrapper's terminal monitor
+    _activity_changed = False
     try:
         body = await request.json()
         if "active" in body:
-            mcp_bridge.set_active(current_name, bool(body["active"]))
+            active_val = bool(body["active"])
+            was_active = mcp_bridge._activity.get(current_name, False)
+            mcp_bridge.set_active(current_name, active_val)
+            _activity_changed = was_active != active_val
     except Exception:
         pass  # No body = plain heartbeat
+    # Immediately broadcast on activity state change (don't wait for background checker)
+    if _activity_changed:
+        await broadcast_status()
     # Return canonical name so wrapper can track renames
     resp = {"ok": True, "name": current_name}
     if registry:

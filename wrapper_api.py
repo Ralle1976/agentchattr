@@ -94,7 +94,7 @@ def main():
 
     # Thread-safe identity state (can change via heartbeat rename)
     _lock = threading.Lock()
-    _state = {"name": name, "token": token}
+    _state = {"name": name, "token": token, "working": False}
 
     def get_name():
         with _lock:
@@ -111,6 +111,14 @@ def main():
             if new_token:
                 _state["token"] = new_token
 
+    def set_working(val):
+        with _lock:
+            _state["working"] = val
+
+    def is_working():
+        with _lock:
+            return _state["working"]
+
     # Heartbeat thread — same pattern as wrapper.py
     def _heartbeat():
         while True:
@@ -120,7 +128,7 @@ def main():
                 req = urllib.request.Request(
                     f"http://127.0.0.1:{server_port}/api/heartbeat/{n}",
                     method="POST",
-                    data=json.dumps({"active": True}).encode(),
+                    data=json.dumps({"active": is_working()}).encode(),
                     headers=_auth_headers(t, include_json=True),
                 )
                 with urllib.request.urlopen(req, timeout=5) as resp:
@@ -227,6 +235,7 @@ def main():
     # Handle a trigger — read context, call model, respond
     def handle_trigger(channel="general"):
         my_name = get_name()
+        set_working(True)
         try:
             chat_msgs = read_messages(channel=channel, limit=context_messages)
             if not chat_msgs:
@@ -251,6 +260,8 @@ def main():
             print(f"  [{channel}] Responded ({len(response)} chars)")
         except Exception as exc:
             print(f"  Error handling trigger: {exc}")
+        finally:
+            set_working(False)
 
     # Queue watcher — polls queue file for @mentions
     queue_file = data_dir / f"{name}_queue.jsonl"
