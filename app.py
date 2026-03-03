@@ -301,10 +301,13 @@ def configure(cfg: dict, session_token: str = ""):
                         name for name, ts in mcp_bridge._presence.items()
                         if now - ts < mcp_bridge.PRESENCE_TIMEOUT
                     }
-                    currently_active = {
-                        name for name, active in mcp_bridge._activity.items()
-                        if active
-                    }
+                    currently_active = set()
+                    for name, active in mcp_bridge._activity.items():
+                        if active:
+                            if now - mcp_bridge._activity_ts.get(name, 0) < mcp_bridge.ACTIVITY_TIMEOUT:
+                                currently_active.add(name)
+                            else:
+                                mcp_bridge._activity[name] = False  # auto-expire
 
                 # Crash timeout: if a wrapper hasn't heartbeated for 60s,
                 # it's dead — deregister it to free the slot.

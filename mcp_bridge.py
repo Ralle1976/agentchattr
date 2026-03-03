@@ -24,6 +24,8 @@ registry = None       # set by run.py — RuntimeRegistry instance
 config = None         # set by run.py — full config.toml dict
 _presence: dict[str, float] = {}
 _activity: dict[str, bool] = {}   # True = screen changed on last poll
+_activity_ts: dict[str, float] = {}  # timestamp of last active=True heartbeat
+ACTIVITY_TIMEOUT = 8  # auto-expire activity after 8s without a fresh active=True
 _presence_lock = threading.Lock()   # guards both _presence and _activity
 _renamed_from: set[str] = set()    # old names from renames — suppress leave messages
 _cursors: dict[str, dict[str, int]] = {}  # agent_name → {channel_name → last_id}
@@ -263,6 +265,8 @@ def migrate_identity(old_name: str, new_name: str):
             _presence[new_name] = _presence.pop(old_name)
         if old_name in _activity:
             _activity[new_name] = _activity.pop(old_name)
+        if old_name in _activity_ts:
+            _activity_ts[new_name] = _activity_ts.pop(old_name)
         _renamed_from.add(old_name)  # suppress leave message for old name
     with _cursors_lock:
         if old_name in _cursors:
@@ -275,6 +279,7 @@ def purge_identity(name: str):
     with _presence_lock:
         _presence.pop(name, None)
         _activity.pop(name, None)
+        _activity_ts.pop(name, None)
     with _cursors_lock:
         _cursors.pop(name, None)
     _save_cursors()
@@ -425,11 +430,21 @@ def is_online(name: str) -> bool:
 def set_active(name: str, active: bool):
     with _presence_lock:
         _activity[name] = active
+        if active:
+            _activity_ts[name] = __import__("time").time()
 
 
 def is_active(name: str) -> bool:
+    import time as _time
     with _presence_lock:
-        return _activity.get(name, False)
+        if not _activity.get(name, False):
+            return False
+        # Auto-expire stale activity
+        ts = _activity_ts.get(name, 0)
+        if _time.time() - ts > ACTIVITY_TIMEOUT:
+            _activity[name] = False
+            return False
+        return True
 
 
 def chat_decision(
