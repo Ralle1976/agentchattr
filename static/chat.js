@@ -1576,14 +1576,25 @@ function copyMessage(msgId, event) {
     if (event) event.stopPropagation();
     const el = document.querySelector(`.message[data-id="${msgId}"]`);
     if (!el) return;
-    const text = el.dataset.rawText || el.querySelector('.msg-text')?.textContent || '';
-    navigator.clipboard.writeText(text).then(() => {
+    const msgText = el.querySelector('.msg-text');
+    const html = msgText?.innerHTML || '';
+    const plain = msgText?.innerText || '';
+    const done = () => {
         const btn = el.querySelector('.bubble-copy');
         if (btn) {
             btn.classList.add('copied');
             setTimeout(() => btn.classList.remove('copied'), 1500);
         }
-    });
+    };
+    // Rich HTML + plain text — works in Google Docs and code editors
+    if (navigator.clipboard.write) {
+        navigator.clipboard.write([new ClipboardItem({
+            'text/html': new Blob([html], {type: 'text/html'}),
+            'text/plain': new Blob([plain], {type: 'text/plain'}),
+        })]).then(done);
+    } else {
+        navigator.clipboard.writeText(plain).then(done);
+    }
 }
 
 function startReply(msgId, event) {
