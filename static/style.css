@@ -32,13 +32,13 @@ body {
     overflow: hidden;
 }
 
-body, body.font-mono {
-    font-family: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-}
-
-body.font-sans {
+body, body.font-sans {
     font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
     font-size: 14px;
+}
+
+body.font-mono {
+    font-family: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
 }
 
 body.high-contrast {
