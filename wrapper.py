@@ -237,8 +237,12 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
                         trigger_flag[0] = True
                     time.sleep(0.5)
                     prompt = f"mcp read #{channel} - you were mentioned, take appropriate action"
-                    # Append role if set
-                    role = _fetch_role(server_port, agent_name)
+                    # Use current identity (may have changed via rename)
+                    current_name, _ = get_identity_fn()
+                    # Append role if set — check both current name and base name
+                    role = _fetch_role(server_port, current_name)
+                    if not role and current_name != agent_name:
+                        role = _fetch_role(server_port, agent_name)
                     if role:
                         prompt += f" - your role: {role}"
                     if first_mention and is_multi_instance:
