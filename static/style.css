@@ -14,6 +14,26 @@
     --system-color: #555570;
     --error-color: #f87171;
     --accent: #7c3aed;
+
+    /* Sidebar Unified Tokens */
+    --sb-padding: 8px 16px;
+    --sb-gap: 8px;
+    --sb-card-radius: 6px;
+    --sb-card-border-color: rgba(255, 255, 255, 0.03);
+    --sb-card-border-width: 1px;
+
+    /* Sidebar Typography */
+    --sb-title-fs: 13px;
+    --sb-title-fw: 600;
+    --sb-title-lh: 1.3;
+    --sb-meta-fs: 12px;
+    --sb-label-fs: 11px;
+    --sb-meta-fw: 400;
+    --sb-meta-lh: 1.35;
+
+    /* Sidebar Layers & Motion */
+    --sb-ghost-opacity: 0.5;
+    --sb-motion-fast: 160ms;
 }
 
 * {
@@ -1297,24 +1317,24 @@ main#timeline {
 .jobs-header {
     display: flex;
     align-items: center;
-    padding: 10px 16px;
-    font-size: 13px;
-    font-weight: 600;
-    line-height: 1;
+    padding: var(--sb-padding);
+    font-size: var(--sb-title-fs);
+    font-weight: var(--sb-title-fw);
+    line-height: var(--sb-title-lh);
     color: var(--text-dim);
-    border-bottom: 1px solid var(--border);
+    border-bottom: var(--sb-card-border-width) solid var(--border);
     flex-shrink: 0;
-    gap: 4px;
+    gap: var(--sb-gap);
 }
 
 .jobs-create-btn {
     margin-left: auto;
     background: none;
-    border: 1px solid var(--border);
+    border: var(--sb-card-border-width) solid var(--border);
     color: var(--text-dim);
     width: 22px;
     height: 22px;
-    border-radius: 4px;
+    border-radius: var(--sb-card-radius);
     font-size: 16px;
     cursor: pointer;
     display: flex;
@@ -1346,14 +1366,13 @@ main#timeline {
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 4px 0;
 }
 
 .jobs-empty {
     padding: 24px 16px;
     color: var(--text-dim);
-    font-size: 12px;
-    line-height: 1.6;
+    font-size: var(--sb-meta-fs);
+    line-height: var(--sb-meta-lh);
     text-align: center;
     display: flex;
     align-items: center;
@@ -1363,19 +1382,20 @@ main#timeline {
 
 /* State group headers (Active / Done / Archived) */
 .jobs-group-header {
-    padding: 8px 16px 4px;
-    font-size: 11px;
-    font-weight: 600;
+    padding: var(--sb-padding);
+    padding-bottom: 4px;
+    font-size: var(--sb-label-fs);
+    font-weight: var(--sb-title-fw);
     color: var(--text-dim);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    border-bottom: 1px solid var(--border);
+    border-bottom: var(--sb-card-border-width) solid var(--border);
     margin-bottom: 2px;
 }
 
 .jobs-group-header.open {
     color: var(--text-dim);
-    border-bottom-color: rgba(255, 255, 255, 0.06);
+    border-bottom-color: var(--sb-card-border-color);
 }
 
 .jobs-group-header.done {
@@ -1391,7 +1411,7 @@ main#timeline {
 .jobs-group-header.collapsible {
     cursor: pointer;
     user-select: none;
-    transition: color 0.15s;
+    transition: color var(--sb-motion-fast);
 }
 .jobs-group-header.collapsible:hover { color: var(--text); }
 .jobs-group-header.collapsible::before {
@@ -1416,10 +1436,10 @@ main#timeline {
 
 /* Individual job card */
 .job-card {
-    padding: 8px 16px;
+    padding: var(--sb-padding);
     cursor: pointer;
-    transition: background 0.14s ease, transform 0.18s ease, box-shadow 0.2s ease, opacity 0.18s ease, filter 0.18s ease;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    transition: background var(--sb-motion-fast) ease, transform 0.18s ease, box-shadow 0.2s ease, opacity 0.18s ease, filter 0.18s ease;
+    border-bottom: var(--sb-card-border-width) solid var(--sb-card-border-color);
     position: relative;
     will-change: transform;
 }
@@ -1434,7 +1454,7 @@ main#timeline {
 .job-card:hover { background: var(--bg-msg-hover); }
 
 .jobs-group-items.job-reorder-active .job-card {
-    transition: opacity 0.14s ease, box-shadow 0.18s ease;
+    transition: opacity var(--sb-motion-fast) ease, box-shadow 0.18s ease;
 }
 
 .job-card.reorder-dragging {
@@ -1504,19 +1524,19 @@ main#timeline {
 .job-status-dot.archived { background: var(--text-dim); opacity: 0.4; }
 
 .job-title {
-    font-size: 13px;
+    font-size: var(--sb-title-fs);
     color: var(--text);
     white-space: normal;
     overflow-wrap: break-word;
     word-break: break-word;
-    line-height: 1.3;
+    line-height: var(--sb-title-lh);
     min-width: 0;
     flex: 1;
     -webkit-user-drag: none;
 }
 
 .job-msg-count {
-    font-size: 11px;
+    font-size: var(--sb-label-fs);
     color: var(--text-dim);
     flex-shrink: 0;
 }
@@ -1688,6 +1708,59 @@ body.archive-no-select * {
     font-weight: 500;
 }
 
+/* --- Ghost cards (Empty state onboarding) --- */
+
+.sb-ghost-card {
+    opacity: var(--sb-ghost-opacity);
+    border: var(--sb-card-border-width) dashed var(--border);
+    border-radius: var(--sb-card-radius);
+    padding: var(--sb-padding);
+    margin: 4px 16px; /* Match sidebar padding */
+    cursor: pointer;
+    transition: opacity var(--sb-motion-fast), border-color var(--sb-motion-fast), transform var(--sb-motion-fast);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    user-select: none;
+}
+
+.sb-ghost-card:hover {
+    opacity: 0.8;
+    border-color: var(--accent);
+    transform: translateY(-1px);
+}
+
+.sb-ghost-card:active {
+    transform: translateY(0);
+}
+
+.sb-ghost-title {
+    font-size: var(--sb-title-fs);
+    font-weight: var(--sb-title-fw);
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.sb-ghost-title::before {
+    content: '+';
+    font-size: 16px;
+    font-weight: 400;
+    color: var(--accent);
+}
+
+.sb-ghost-meta {
+    font-size: var(--sb-meta-fs);
+    color: var(--text-dim);
+    line-height: var(--sb-meta-lh);
+}
+
+/* --- Sidebar Undo Toast --- */
+
+
+/* --- Avatar Chips --- */
+
 
 /* --- Job conversation view --- */
 
@@ -1784,34 +1857,25 @@ body.archive-no-select * {
     color: #ef4444;
 }
 
-.job-body-brief {
-    padding: 8px 12px;
-    margin: 0 8px 4px;
+.job-brief-card {
+    padding: 10px 12px;
+    margin: 0;
     font-size: 12px;
     line-height: 1.5;
-    color: rgba(255, 255, 255, 0.7);
-    border-left: 2px solid rgba(168, 85, 247, 0.4);
-    background: rgba(168, 85, 247, 0.05);
-    border-radius: 0 4px 4px 0;
-}
-.job-body-brief p { margin: 0 0 4px; }
-.job-body-brief p:last-child { margin-bottom: 0; }
-
-.job-pinned-msg {
-    padding: 10px 12px;
+    color: rgba(255, 255, 255, 0.75);
+    border-left: 3px solid rgba(168, 85, 247, 0.5);
+    background: rgba(168, 85, 247, 0.06);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
-    font-size: 12px;
-    line-height: 1.5;
-    background: rgba(255, 255, 255, 0.02);
 }
-
-.job-pinned-msg .job-msg-header {
-    margin-bottom: 4px;
-}
-
-.job-pinned-msg .job-msg-text {
-    color: rgba(255, 255, 255, 0.8);
+.job-brief-card .job-brief-text p { margin: 0 0 4px; }
+.job-brief-card .job-brief-text p:last-child { margin-bottom: 0; }
+.job-brief-card .job-brief-text a { color: rgba(168, 85, 247, 0.9); }
+.job-brief-card .job-brief-text code {
+    background: rgba(168, 85, 247, 0.1);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 11px;
 }
 
 .jobs-conv-messages {
@@ -2138,25 +2202,26 @@ body.archive-no-select * {
 /* --- Job create dialog (inline at top of list) --- */
 
 .job-create-form {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
+    padding: 4px 16px 8px;
+    border-bottom: var(--sb-card-border-width) solid var(--border);
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    background: var(--bg-msg);
+    gap: 4px;
+    background: var(--bg-msg-hover);
 }
 
 .job-create-form input,
 .job-create-form textarea {
     background: var(--bg-input);
-    border: 1px solid var(--border);
-    border-radius: 6px;
+    border: var(--sb-card-border-width) solid var(--border);
+    border-radius: var(--sb-card-radius);
     color: var(--text);
-    padding: 6px 8px;
+    padding: 6px 10px;
     font-family: inherit;
-    font-size: 13px;
+    font-size: var(--sb-title-fs);
     outline: none;
 }
+
 
 .job-create-form input:focus,
 .job-create-form textarea:focus {
@@ -2170,7 +2235,7 @@ body.archive-no-select * {
 
 .job-create-actions {
     display: flex;
-    gap: 6px;
+    gap: 8px;
     justify-content: flex-end;
 }
 
@@ -2314,14 +2379,14 @@ body.archive-no-select * {
 .decisions-header {
     display: flex;
     align-items: center;
-    padding: 10px 16px;
-    font-size: 13px;
-    font-weight: 600;
-    line-height: 1;
+    padding: var(--sb-padding);
+    font-size: var(--sb-title-fs);
+    font-weight: var(--sb-title-fw);
+    line-height: var(--sb-title-lh);
     color: var(--text-dim);
-    border-bottom: 1px solid var(--border);
+    border-bottom: var(--sb-card-border-width) solid var(--border);
     flex-shrink: 0;
-    gap: 4px;
+    gap: var(--sb-gap);
 }
 
 .decisions-header > * {
@@ -2332,7 +2397,6 @@ body.archive-no-select * {
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 8px 0;
     display: flex;
     flex-direction: column;
 }
@@ -2340,8 +2404,8 @@ body.archive-no-select * {
 .decisions-empty {
     padding: 24px 16px;
     color: var(--text-dim);
-    font-size: 12px;
-    line-height: 1.5;
+    font-size: var(--sb-meta-fs);
+    line-height: var(--sb-meta-lh);
     text-align: center;
     display: flex;
     align-items: center;
@@ -2350,9 +2414,9 @@ body.archive-no-select * {
 }
 
 .decision-card {
-    padding: 10px 16px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
-    transition: background 0.1s;
+    padding: var(--sb-padding);
+    border-bottom: var(--sb-card-border-width) solid var(--sb-card-border-color);
+    transition: background var(--sb-motion-fast);
     min-width: 0;
 }
 
@@ -2371,7 +2435,7 @@ body.archive-no-select * {
     gap: 5px;
     padding: 2px 8px;
     border-radius: 10px;
-    font-size: 11px;
+    font-size: var(--sb-label-fs);
     font-weight: 600;
     flex-shrink: 0;
 }
@@ -2465,15 +2529,15 @@ body.archive-no-select * {
 }
 
 .decision-text {
-    font-size: 13px;
-    line-height: 1.5;
+    font-size: var(--sb-title-fs);
+    line-height: var(--sb-title-lh);
     color: var(--text);
     margin-bottom: 2px;
     overflow-wrap: break-word;
 }
 
 .decisions-counter {
-    font-size: 11px;
+    font-size: var(--sb-label-fs);
     font-weight: 400;
     line-height: 1;
     color: var(--text-dim);
@@ -2483,7 +2547,7 @@ body.archive-no-select * {
 }
 
 .decision-reason {
-    font-size: 12px;
+    font-size: var(--sb-meta-fs);
     color: var(--text-dim);
     font-style: italic;
     overflow-wrap: break-word;
@@ -2550,57 +2614,6 @@ body.archive-no-select * {
 
 /* --- Decisions form --- */
 
-.decisions-form {
-    padding: 12px 16px;
-    border-top: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    flex-shrink: 0;
-}
-
-.decisions-form textarea {
-    background: var(--bg-input);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text);
-    padding: 8px 10px;
-    font-family: inherit;
-    font-size: 13px;
-    resize: none;
-    outline: none;
-    overflow: hidden;
-    min-height: 36px;
-}
-
-.decisions-form textarea:focus {
-    border-color: var(--accent);
-}
-
-.char-counter {
-    font-size: 11px;
-    text-align: right;
-    margin-top: -4px;
-    color: var(--text-dim);
-}
-
-.char-counter.over {
-    color: var(--error-color);
-}
-
-.decisions-form button {
-    background: var(--accent);
-    color: white;
-    border: none;
-    border-radius: 6px;
-    padding: 8px;
-    font-family: inherit;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-}
-
-.decisions-form button:hover { opacity: 0.85; }
 
 /* --- Decisions badge (header button) --- */
 

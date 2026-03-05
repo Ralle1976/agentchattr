@@ -681,6 +681,18 @@ function appendMessage(msg) {
         const isError = msg.text.startsWith('[') && msg.text.includes('error');
         if (isError) el.classList.add('error-msg');
 
+        // Update last mentioned agent if message is from user (Ben)
+        if (msg.sender.toLowerCase() === username.toLowerCase()) {
+            const mentions = msg.text.match(/@(\w+)/g);
+            if (mentions) {
+                const lastMention = mentions[mentions.length - 1].slice(1).toLowerCase();
+                // Check against registered agents (agentConfig keys are name labels)
+                if (agentConfig[lastMention]) {
+                    _lastMentionedAgent = lastMention;
+                }
+            }
+        }
+
         let textHtml = styleHashtags(renderMarkdown(msg.text));
 
         const senderColor = getColor(msg.sender);
@@ -1629,8 +1641,11 @@ function updateMentionMenu() {
     mentionMenuVisible = true;
 }
 
+let _lastMentionedAgent = ''; // track most recent mention for auto-assignment
+
 function selectMention(name) {
     const input = document.getElementById('input');
+    _lastMentionedAgent = name; // remember for auto-assigning jobs
     const text = input.value;
     const cursor = input.selectionStart;
     // Replace from @ to cursor with @name + space
@@ -2817,9 +2832,7 @@ function setupDecisionGrip() {
 }
 
 function setupDecisionForm() {
-    setupCharCounter('decision-text', 'decision-text-counter');
-    setupCharCounter('decision-reason', 'decision-reason-counter');
-
+    // Form is now inline via showCreateDecision(), no persistent elements to set up
 }
 
 // --- Decisions ---
@@ -2896,12 +2909,15 @@ function renderDecisionsPanel() {
     const counter = document.getElementById('decisions-counter');
     if (counter) counter.textContent = `${decisions.length}/30`;
 
-    const hint = decisions.length < 3
-        ? '<div class="decisions-empty">Shared rules for agents.<br>They can propose them, or make your own below.<br>Try the debate button!</div>'
-        : '';
-
     if (decisions.length === 0) {
-        list.innerHTML = hint;
+        const ghost = document.createElement('div');
+        ghost.className = 'sb-ghost-card';
+        ghost.innerHTML = `
+            <div class="sb-ghost-title">Make your first decision</div>
+            <div class="sb-ghost-meta">Architectural rules, naming conventions, workflow agreements.</div>
+        `;
+        ghost.onclick = () => showCreateDecision();
+        list.appendChild(ghost);
         return;
     }
 
@@ -2926,14 +2942,23 @@ function renderDecisionsPanel() {
         const trashIcon = `<button class="delete-btn" onclick="startDeleteDecision(${d.id})" title="Delete"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 4h10M6 4V3h4v1M5 4v8.5h6V4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`;
 
         // Color the owner like they appear in chat
-        const ownerKey = d.owner.toLowerCase();
-        const ownerColor = agentConfig[ownerKey]?.color || 'var(--user-color)';
+        const ownerKey = (d.owner || 'user').toLowerCase();
+        const agentInfo = agentConfig[ownerKey];
+        const ownerColor = agentInfo?.color || 'var(--user-color)';
+        const avatarSvg = getAvatarSvg(d.owner || 'user');
+
+        const chipHtml = `
+            <div class="sb-chip" title="${escapeHtml(d.owner || 'user')}" style="border-color: color-mix(in srgb, ${ownerColor} 40%, transparent); background: color-mix(in srgb, ${ownerColor} 10%, transparent);">
+                ${avatarSvg}
+            </div>
+        `;
 
         card.innerHTML = `
             <div class="decision-card-header">
                 <span class="decision-number">#${displayNum}</span>
                 <span class="decision-pill ${d.status}" onclick="toggleDecisionStatus(${d.id})" title="Click to toggle status"><span class="decision-dot"></span>${d.status}</span>
-                <span class="decision-owner" style="color: ${ownerColor}">${escapeHtml(d.owner)}</span>
+                ${chipHtml}
+                <span class="decision-owner" style="color: ${ownerColor}">${escapeHtml(d.owner || 'user')}</span>
                 <div class="decision-actions">
                     ${debateIcon}${editIcon}${trashIcon}
                 </div>
@@ -2987,12 +3012,50 @@ function markJobRead(jobId) {
     updateJobsBadge();
 }
 
-function proposeDecision() {
-    const textEl = document.getElementById('decision-text');
-    const reasonEl = document.getElementById('decision-reason');
-    const text = (textEl.value || '').trim();
-    const reason = (reasonEl.value || '').trim();
-    if (!text) return;
+function showCreateDecision() {
+    const list = document.getElementById('decisions-list');
+    if (!list) return;
+    const existing = list.querySelector('.job-create-form');
+    if (existing) { existing.remove(); return; }
+
+    const form = document.createElement('div');
+    form.className = 'job-create-form';
+    form.innerHTML = `
+        <input type="text" placeholder="Decision" class="decision-create-text" maxlength="80" autofocus>
+        <textarea placeholder="Reason (optional)" class="decision-create-reason" maxlength="80" rows="2"></textarea>
+        <div class="job-create-actions">
+            <button class="cancel-btn" onclick="this.closest('.job-create-form').remove()">Cancel</button>
+            <button class="create-btn" onclick="submitCreateDecision(this)">Make</button>
+        </div>
+    `;
+    list.prepend(form);
+    const textInput = form.querySelector('.decision-create-text');
+    textInput.focus();
+    textInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            form.querySelector('.decision-create-reason').focus();
+        } else if (e.key === 'Escape') {
+            form.remove();
+        }
+    });
+    const reasonTA = form.querySelector('.decision-create-reason');
+    reasonTA.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') form.remove();
+    });
+    reasonTA.addEventListener('input', () => {
+        reasonTA.style.height = 'auto';
+        reasonTA.style.height = reasonTA.scrollHeight + 'px';
+    });
+}
+
+function submitCreateDecision(btn) {
+    const form = btn.closest('.job-create-form');
+    const textInput = form.querySelector('.decision-create-text');
+    const reasonInput = form.querySelector('.decision-create-reason');
+    const text = (textInput.value || '').trim();
+    const reason = (reasonInput.value || '').trim();
+    if (!text) { textInput.focus(); return; }
 
     ws.send(JSON.stringify({
         type: 'decision_propose',
@@ -3000,8 +3063,7 @@ function proposeDecision() {
         reason: reason,
         owner: username,
     }));
-    textEl.value = '';
-    reasonEl.value = '';
+    form.remove();
 }
 
 function debateDecision(id) {
@@ -3375,7 +3437,7 @@ function showJobsListView() {
     updateJobReplyTargetUI();
 }
 
-const _expandedGroups = new Set(); // track which collapsible groups are open across re-renders
+const _expandedGroups = new Set(['open']); // track which collapsible groups are open across re-renders
 
 function _jobSortValue(a) {
     const raw = Number(a?.sort_order);
@@ -3546,13 +3608,12 @@ function renderJobsList() {
     console.log('CLEAR_DEBUG renderJobsList called', 'jobsData.length=' + jobsData.length, 'activeChannel=' + activeChannel, new Error().stack.split('\n').slice(1, 4).join(' <- '));
     list.innerHTML = '';
 
+    // Update counter in header if it exists
+    const counter = document.getElementById('jobs-counter');
+    if (counter) counter.textContent = `${jobsData.length}`;
+
     // Jobs are global — show all regardless of channel
     const channelJobs = jobsData;
-
-    if (channelJobs.length === 0) {
-        list.innerHTML = '<div class="jobs-empty">No jobs yet.<br>Click + to create one, or start one from a message.</div>';
-        return;
-    }
 
     // Group by status: open first, then done, then archived
     const groups = [
@@ -3563,6 +3624,21 @@ function renderJobsList() {
     for (const a of channelJobs) {
         const g = groups.find(g => g.key === a.status);
         if (g) g.items.push(a);
+    }
+
+    // Ghost card only when there are zero jobs total
+    if (channelJobs.length === 0) {
+        const ghost = document.createElement('div');
+        ghost.className = 'sb-ghost-card';
+        ghost.innerHTML = `
+            <div class="sb-ghost-title">Create your first job</div>
+            <div class="sb-ghost-meta">Track work items with threaded conversations. Use @mentions to loop in agents.</div>
+        `;
+        ghost.onclick = () => {
+            const btn = document.querySelector('.jobs-create-btn');
+            if (btn) btn.click();
+        };
+        list.appendChild(ghost);
     }
 
     for (const group of groups) {
@@ -3606,6 +3682,7 @@ function renderJobsList() {
             header.classList.remove('drop-target');
             const draggedId = _draggedJobId;
             if (!draggedId || _draggedJobStatus === group.key) return;
+            const oldStatus = _draggedJobStatus;
             try {
                 await fetch(`/api/jobs/${draggedId}`, {
                     method: 'PATCH',
@@ -3616,6 +3693,7 @@ function renderJobsList() {
                 _beginJobReorderMute({ ids: [draggedId], channel: activeChannel, status: group.key });
                 if (act) act.status = group.key;
                 _flipRenderJobs();
+
             } catch (err) { console.error('Failed to change status:', err); }
         });
 
@@ -3826,20 +3904,22 @@ async function openJobConversation(jobId) {
     titleEl.onclick = () => startEditJobTitle(job, titleEl);
     updateJobToggles(job.status);
 
-    // Render body brief if present
-    let bodyEl = convView.querySelector('.job-body-brief');
-    if (bodyEl) bodyEl.remove();
-    if (job.body) {
-        bodyEl = document.createElement('div');
-        bodyEl.className = 'job-body-brief';
-        bodyEl.innerHTML = renderMarkdown(job.body);
-        const messagesContainer = document.getElementById('jobs-conv-messages');
-        messagesContainer.parentNode.insertBefore(bodyEl, messagesContainer);
-    }
+    // Render unified brief card header
+    let briefEl = convView.querySelector('.job-brief-card');
+    if (briefEl) briefEl.remove();
+    // Also clean up legacy elements
+    let legacyBody = convView.querySelector('.job-body-brief');
+    if (legacyBody) legacyBody.remove();
+    let legacyPinned = convView.querySelector('.job-pinned-msg');
+    if (legacyPinned) legacyPinned.remove();
 
-    // Clear pinned first message
-    let pinnedEl = convView.querySelector('.job-pinned-msg');
-    if (pinnedEl) pinnedEl.remove();
+    if (job.body) {
+        briefEl = document.createElement('div');
+        briefEl.className = 'job-brief-card';
+        briefEl.innerHTML = `<div class="job-brief-text">${renderMarkdown(job.body)}</div>`;
+        const messagesContainer = document.getElementById('jobs-conv-messages');
+        messagesContainer.parentNode.insertBefore(briefEl, messagesContainer);
+    }
 
     // Load messages
     const messages = await loadJobMessages(jobId);
@@ -3863,40 +3943,18 @@ async function loadJobMessages(jobId) {
         const msgs = await resp.json();
 
         if (msgs.length === 0) {
-            container.innerHTML = '<div class="jobs-empty" style="font-size:12px; padding:16px">No messages yet. Start the conversation!</div>';
+            // Only show empty state if there's no brief card either
+            const convView = document.getElementById('jobs-conversation-view');
+            const hasBrief = !!convView.querySelector('.job-brief-card');
+            if (!hasBrief) {
+                container.innerHTML = '<div class="jobs-empty" style="font-size:12px; padding:16px">No messages yet. Start the conversation!</div>';
+            }
             return [];
         }
 
-        // Pin the first message as a frozen header above the scroll area
-        const firstMsg = msgs[0];
-        const convView = document.getElementById('jobs-conversation-view');
-        let pinnedEl = convView.querySelector('.job-pinned-msg');
-        if (!pinnedEl) {
-            pinnedEl = document.createElement('div');
-            pinnedEl.className = 'job-pinned-msg';
-            container.parentNode.insertBefore(pinnedEl, container);
-        }
-        const senderColor = getColor(firstMsg.sender);
-        let attHtml = '';
-        if (firstMsg.attachments && firstMsg.attachments.length > 0) {
-            attHtml = '<div class="job-msg-attachments">';
-            for (const att of firstMsg.attachments) {
-                attHtml += `<img src="${escapeHtml(att.url)}" alt="${escapeHtml(att.name || '')}" onclick="openImageModal('${escapeHtml(att.url)}')">`;
-            }
-            attHtml += '</div>';
-        }
-        pinnedEl.innerHTML = `
-            <div class="job-msg-header">
-                <span class="job-msg-sender" style="color: ${senderColor}">${escapeHtml(firstMsg.sender)}</span>
-                <span class="job-msg-time">${firstMsg.time || ''}</span>
-            </div>
-            ${firstMsg.text ? `<div class="job-msg-text">${renderMarkdown(firstMsg.text)}</div>` : ''}
-            ${attHtml}
-        `;
-
-        // Render remaining messages in the scrollable area
-        for (let i = 1; i < msgs.length; i++) {
-            appendJobMessage(msgs[i]);
+        // Render all messages in the scrollable area
+        for (const msg of msgs) {
+            appendJobMessage(msg);
         }
 
         container.scrollTop = container.scrollHeight;
@@ -4065,6 +4123,11 @@ function startEditJobTitle(job, titleEl) {
 
 async function toggleJobStatus(status) {
     if (!activeJobId) return;
+    const job = jobsData.find(a => a.id === activeJobId);
+    if (!job) return;
+    const oldStatus = job.status;
+    const statusLabels = { 'open': 'TO DO', 'done': 'ACTIVE', 'archived': 'CLOSED' };
+
     try {
         await fetch(`/api/jobs/${activeJobId}`, {
             method: 'PATCH',
@@ -4072,14 +4135,14 @@ async function toggleJobStatus(status) {
             body: JSON.stringify({ status }),
         });
         // Update local data
-        const job = jobsData.find(a => a.id === activeJobId);
-        if (job) job.status = status;
+        job.status = status;
         if (status === 'archived') {
             jobsBack();
-            loadJobs();
         } else {
             updateJobToggles(status);
         }
+
+        renderJobsList();
     } catch (e) {
         console.error('Failed to update job status:', e);
     }
@@ -4103,21 +4166,31 @@ function showCreateJob() {
     form.className = 'job-create-form';
     form.innerHTML = `
         <input type="text" placeholder="Job title" class="job-create-title" maxlength="120" autofocus>
+        <textarea placeholder="Description (optional)" class="job-create-body" maxlength="1000" rows="2"></textarea>
         <div class="job-create-actions">
             <button class="cancel-btn" onclick="this.closest('.job-create-form').remove()">Cancel</button>
             <button class="create-btn" onclick="submitCreateJob(this)">Create</button>
         </div>
     `;
     list.prepend(form);
-    form.querySelector('input').focus();
-    // Enter key to submit
-    form.querySelector('input').addEventListener('keydown', (e) => {
+    const titleInput = form.querySelector('.job-create-title');
+    titleInput.focus();
+    // Enter on title moves to body, Enter on empty body submits
+    titleInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
             e.preventDefault();
-            submitCreateJob(form.querySelector('.create-btn'));
+            form.querySelector('.job-create-body').focus();
         } else if (e.key === 'Escape') {
             form.remove();
         }
+    });
+    const bodyTA = form.querySelector('.job-create-body');
+    bodyTA.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') form.remove();
+    });
+    bodyTA.addEventListener('input', () => {
+        bodyTA.style.height = 'auto';
+        bodyTA.style.height = bodyTA.scrollHeight + 'px';
     });
 }
 
@@ -4126,6 +4199,8 @@ async function submitCreateJob(btn) {
     const titleInput = form.querySelector('.job-create-title');
     const title = titleInput.value.trim();
     if (!title) { titleInput.focus(); return; }
+    const bodyInput = form.querySelector('.job-create-body');
+    const jobBody = bodyInput ? bodyInput.value.trim() : '';
 
     try {
         await fetch('/api/jobs', {
@@ -4133,9 +4208,11 @@ async function submitCreateJob(btn) {
             headers: { 'Content-Type': 'application/json', 'X-Session-Token': SESSION_TOKEN },
             body: JSON.stringify({
                 title,
+                body: jobBody,
                 type: 'job',
                 channel: activeChannel,
                 created_by: username,
+                assignee: _lastMentionedAgent || '',
             }),
         });
         form.remove();
@@ -4225,6 +4302,9 @@ function handleJobEvent(action, data) {
         }
     }
     updateJobsBadge();
+    // Keep counter in sync
+    const jobsCounter = document.getElementById('jobs-counter');
+    if (jobsCounter) jobsCounter.textContent = `${jobsData.length}`;
     // Re-render list if visible
     const panel = document.getElementById('jobs-panel');
     if (panel && !panel.classList.contains('hidden') && !activeJobId) {
@@ -4719,6 +4799,7 @@ function updateJobMentionMenu() {
 
 function selectJobMention(name) {
     const input = document.getElementById('jobs-conv-input-text');
+    _lastMentionedAgent = name; // track for future job creation
     const text = input.value;
     const cursor = input.selectionStart;
     const before = text.slice(0, jobMentionStart);
@@ -4733,6 +4814,7 @@ function selectJobMention(name) {
 }
 
 // --- Helpers ---
+
 
 function escapeHtml(text) {
     const div = document.createElement('div');

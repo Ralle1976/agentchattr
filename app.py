@@ -1277,6 +1277,22 @@ async def create_job(request: Request):
         created_by=created_by, anchor_msg_id=anchor_msg_id,
         assignee=assignee, body=job_body,
     )
+    # Mark the proposal message as accepted so it persists across refresh
+    if anchor_msg_id:
+        anchor_msg = store.get_by_id(anchor_msg_id)
+        if anchor_msg and anchor_msg.get("type") == "job_proposal":
+            meta = dict(anchor_msg.get("metadata", {}))
+            meta["status"] = "accepted"
+            updated_msg = store.update_message(anchor_msg_id, {"metadata": meta})
+            if updated_msg:
+                payload = json.dumps({"type": "edit", "message": updated_msg})
+                dead = set()
+                for client in list(ws_clients):
+                    try:
+                        await client.send_text(payload)
+                    except Exception:
+                        dead.add(client)
+                ws_clients.difference_update(dead)
     # Post breadcrumb in main timeline with job_id for clickable link
     store.add(created_by, f"Job created: {title}", msg_type="job_created",
               channel=channel, metadata={"job_id": result["id"]})
