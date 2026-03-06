@@ -1402,6 +1402,9 @@ function applySettings(data) {
         document.body.classList.toggle('high-contrast', data.contrast === 'high');
         document.getElementById('setting-contrast').value = data.contrast;
     }
+    if (data.rules_refresh_interval !== undefined) {
+        document.getElementById('setting-rules-refresh').value = String(data.rules_refresh_interval);
+    }
     if (data.channels && Array.isArray(data.channels)) {
         channelList = data.channels;
         // If active channel was deleted, switch to general
@@ -1444,6 +1447,7 @@ function saveSettings() {
     const histVal = document.getElementById('setting-history').value;
     const newHistory = histVal === 'all' ? 'all' : (parseInt(histVal) || 50);
     const newContrast = document.getElementById('setting-contrast').value;
+    const newRulesRefresh = document.getElementById('setting-rules-refresh').value;
 
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
@@ -1454,6 +1458,7 @@ function saveSettings() {
                 max_agent_hops: parseInt(newHops) || 4,
                 history_limit: newHistory,
                 contrast: newContrast,
+                rules_refresh_interval: parseInt(newRulesRefresh) || 0,
             }
         }));
     }
@@ -1476,7 +1481,7 @@ function setupSettingsKeys() {
     }
 
     // Auto-save on change for selects, escape to close
-    for (const id of ['setting-font', 'setting-history', 'setting-contrast']) {
+    for (const id of ['setting-font', 'setting-history', 'setting-contrast', 'setting-rules-refresh']) {
         const el = document.getElementById(id);
         el.addEventListener('change', () => {
             // Apply contrast immediately (don't wait for server round-trip)

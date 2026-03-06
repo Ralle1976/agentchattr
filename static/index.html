@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>agentchattr</title>
-    <link rel="stylesheet" href="/static/style.css?v=174">
+    <link rel="stylesheet" href="/static/style.css?v=178">
     <link rel="icon" href="/static/favicon.ico">
 </head>
 <body>
@@ -82,6 +82,16 @@
                 <select id="setting-contrast">
                     <option value="normal">Normal</option>
                     <option value="high">High</option>
+                </select>
+            </div>
+            <div class="settings-field">
+                <label for="setting-rules-refresh">Rule refresh</label>
+                <select id="setting-rules-refresh" title="How often to re-send active rules to agents">
+                    <option value="0">When rules change</option>
+                    <option value="5">Every 5 triggers</option>
+                    <option value="10" selected>Every 10 triggers</option>
+                    <option value="20">Every 20 triggers</option>
+                    <option value="50">Every 50 triggers</option>
                 </select>
             </div>
             <div class="settings-divider"></div>
@@ -198,6 +208,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/chat.js?v=174"></script>
+    <script src="/static/chat.js?v=178"></script>
 </body>
 </html>

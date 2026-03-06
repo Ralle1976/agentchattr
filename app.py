@@ -985,6 +985,12 @@ async def websocket_endpoint(websocket: WebSocket):
                         pass
                 if "contrast" in new and new["contrast"] in ("normal", "high"):
                     room_settings["contrast"] = new["contrast"]
+                if "rules_refresh_interval" in new:
+                    try:
+                        ri = int(new["rules_refresh_interval"])
+                        room_settings["rules_refresh_interval"] = max(0, min(ri, 100))
+                    except (ValueError, TypeError):
+                        pass
                 if "history_limit" in new:
                     val = str(new["history_limit"]).strip().lower()
                     if val == "all":
@@ -1559,7 +1565,9 @@ async def get_rules():
 @app.get("/api/rules/active")
 async def get_active_rules():
     """Get compact active rules for agent injection."""
-    return JSONResponse(rules.active_list())
+    data = rules.active_list()
+    data["refresh_interval"] = room_settings.get("rules_refresh_interval", 10)
+    return JSONResponse(data)
 
 
 @app.post("/api/rules/remind")

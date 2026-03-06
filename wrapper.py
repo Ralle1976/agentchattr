@@ -336,10 +336,12 @@ def _report_rule_sync(server_port: int, agent_name: str, epoch: int, token: str 
 
 
 def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = False, trigger_flag=None,
-                   server_port: int = 8300, agent_name: str = "", get_token_fn=None):
+                   server_port: int = 8300, agent_name: str = "", get_token_fn=None,
+                   refresh_interval: int = 10):
     """Poll queue file and inject an MCP read task when triggered."""
     first_mention = True
     last_rules_epoch = 0  # 0 = unknown/cold start — will inject on first trigger
+    trigger_count = 0
     while True:
         try:
             _, queue_file = get_identity_fn()
@@ -402,13 +404,17 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
                     if role:
                         prompt += f" - your role: {role}"
 
-                    # Smart rules injection: first trigger or epoch change (remind bumps epoch)
+                    # Smart rules injection: first trigger, epoch change, or periodic refresh
                     _token = get_token_fn() if get_token_fn else ""
                     rules_data = _fetch_active_rules(server_port, _token)
+                    trigger_count += 1
                     if rules_data:
+                        # Use server-side refresh_interval (live from settings UI)
+                        ri = rules_data.get("refresh_interval", refresh_interval)
                         need_inject = (
                             last_rules_epoch == 0
                             or rules_data["epoch"] != last_rules_epoch
+                            or (ri > 0 and trigger_count % ri == 0)
                         )
                         if need_inject:
                             if rules_data["rules"]:
@@ -635,6 +641,7 @@ def main():
     _watcher_thread = None
     _is_multi_instance = registration.get("slot", 1) > 1
     _trigger_flag = [False]  # shared: queue watcher sets True, activity checker reads
+    _refresh_interval = 10  # default; overridden per-trigger by server settings
 
     def start_watcher(inject_fn):
         nonlocal _watcher_inject_fn, _watcher_thread
@@ -644,7 +651,7 @@ def main():
             args=(get_identity, inject_fn),
             kwargs={"is_multi_instance": _is_multi_instance, "trigger_flag": _trigger_flag,
                     "server_port": server_port, "agent_name": assigned_name,
-                    "get_token_fn": get_token},
+                    "get_token_fn": get_token, "refresh_interval": _refresh_interval},
             daemon=True,
         )
         _watcher_thread.start()
@@ -659,7 +666,7 @@ def main():
                     args=(get_identity, _watcher_inject_fn),
                     kwargs={"is_multi_instance": _is_multi_instance, "trigger_flag": _trigger_flag,
                             "server_port": server_port, "agent_name": assigned_name,
-                            "get_token_fn": get_token},
+                            "get_token_fn": get_token, "refresh_interval": _refresh_interval},
                     daemon=True,
                 )
                 _watcher_thread.start()
