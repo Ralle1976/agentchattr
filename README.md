@@ -107,11 +107,11 @@ Assign roles to agents to steer their behavior — Planner, Builder, Reviewer, R
 Click the role pill in any message header to open the picker — choose from presets or type a custom role. Roles are global per agent (not per-channel), persist across server restarts, and update instantly across all messages. Clear a role by selecting "None".
 
 ### Rules
-Shared working style for keeping agents aligned. Agents propose rules via MCP (`chat_rules(action='propose')`) — a proposal card appears in the chat timeline for you to **Activate**, **Add to drafts**, or **Dismiss**. Active rules are automatically injected into agent prompts on every trigger. Agents read them at session start to understand agreed conventions, architecture choices, and workflow rules.
+Rules set the working style for your agents. Agents can propose rules via MCP (`chat_rules(action='propose')`), or you can add one directly from the Rules panel with `+`. Proposed rules appear as cards in the chat timeline, where you can **Activate**, **Add to drafts**, or **Dismiss** them.
 
-The rules panel opens from the header (checkbox icon). Rules are organized into three groups: **Active** (injected into prompts), **Drafts** (proposed but not yet active), and **Archive** (deactivated). Drag cards between groups to change status, or drag to the trash zone in Archive to delete. Click any card to edit inline. A soft warning appears at 7+ active rules — fewer rules tend to work better.
+The Rules panel opens from the header. Rules are grouped into **Active**, **Drafts**, and **Archive**. Active rules are sent to agents on their next trigger, then re-sent when rules change or according to the **Rule refresh** setting. Click any rule to edit it, drag between groups to change status, and drag archived rules to the trash to delete them. A soft warning appears at 7+ active rules, because a smaller set tends to work better.
 
-The **Remind agents** button bumps the rules epoch so all agents receive the updated ruleset on their next trigger. The badge on the header icon shows unseen proposals only — opening the panel clears it. Max 160 chars per rule.
+**Remind agents** re-sends the current rules on the next trigger. The badge on the Rules button shows unseen proposals only. Max 160 chars per rule.
 
 ### Activity indicators
 Status pills show a spinning border in each agent's color when that agent is actively working — so you can minimize the terminals and still know at a glance who's busy. Detection works by hashing the agent's terminal screen buffer every second: if anything changes (spinner, streaming text, tool output), the pill lights up. When the screen stops changing, it stops instantly. Cross-platform — Windows uses `ReadConsoleOutputW`, Mac/Linux uses `tmux capture-pane`.
