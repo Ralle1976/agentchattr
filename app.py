@@ -181,7 +181,17 @@ def _install_security_middleware(token: str, cfg: dict):
             # Static assets, index page, and uploaded images are public.
             # The index page injects the token client-side via same-origin script.
             # Uploads use random filenames and have path-traversal protection.
-            if path == "/" or path.startswith(("/static/", "/uploads/", "/api/heartbeat/", "/api/register", "/api/deregister/", "/api/roles")):
+            if path == "/" or path.startswith(("/static/", "/uploads/", "/api/roles")):
+                return await call_next(request)
+
+            # Agent registration/heartbeat: loopback only (no remote agent minting).
+            if path.startswith(("/api/register", "/api/deregister/", "/api/heartbeat/")):
+                client_ip = request.client.host if request.client else ""
+                if client_ip not in ("127.0.0.1", "::1", "localhost"):
+                    return JSONResponse(
+                        {"error": f"forbidden: agent registration is restricted to local loopback. Source {client_ip} is not allowed."},
+                        status_code=403,
+                    )
                 return await call_next(request)
 
             # --- Origin check (blocks cross-origin / DNS-rebinding attacks) ---
@@ -219,7 +229,6 @@ def _install_security_middleware(token: str, cfg: dict):
 def configure(cfg: dict, session_token: str = ""):
     global store, rules, summaries, jobs, router, agents, registry, session_store, session_engine, config
     config = cfg
-
     # --- Security: store the session token and install middleware ---
     _install_security_middleware(session_token, cfg)
 
@@ -299,11 +308,12 @@ def configure(cfg: dict, session_token: str = ""):
     _known_online: set[str] = set()  # agents we've seen join — track for leave messages
     _posted_leave: set[str] = set()  # agents we've already posted a leave for — debounce
 
-    _known_active: set[str] = set()
+    _known_active = set()
 
     def _background_checks():
         import time as _time
         import mcp_bridge
+
         while True:
             _time.sleep(3)
             # Recovery flags
@@ -748,6 +758,12 @@ async def _handle_new_message(msg: dict):
     chat_msg = f"{sender}: {text}" if text else ""
     custom_prompt = text if is_hidden_session_request else ""
 
+    # Session turn guard: if a session is active on this channel and the sender
+    # is an agent, only allow triggering the agent whose turn it is.
+    # Human @mentions are always allowed (the session engine handles pausing).
+    sender_is_agent = sender in known_agents
+    allowed_agent = session_engine.get_allowed_agent(channel) if session_engine and sender_is_agent else None
+
     import mcp_bridge
     for target in targets:
         # Skip pending instances — they haven't been named/claimed yet
@@ -755,6 +771,9 @@ async def _handle_new_message(msg: dict):
             inst = registry.get_instance(target)
             if inst and inst.get("state") == "pending":
                 continue
+        # Session guard: suppress out-of-turn agent triggers
+        if allowed_agent and target != allowed_agent:
+            continue
         if not mcp_bridge.is_online(target):
             store.add("system", f"{target} appears offline — message queued.", msg_type="system", channel=channel)
         if agents.is_available(target):
