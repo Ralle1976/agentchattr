@@ -200,7 +200,7 @@ async function checkForUpdate() {
             return;
         }
 
-        const label = data.state === 'upstream_update' ? 'Upstream update' : 'Update available';
+        const label = data.state === 'upstream_update' ? 'Upstream update available' : 'Update available';
         pill.href = data.url || 'https://github.com/bcurts/agentchattr/releases';
         pill.innerHTML = `<span>${label}</span><button class="update-dismiss" onclick="dismissUpdate(event, '${data.latest}')" title="Dismiss">&times;</button>`;
         pill.classList.remove('hidden');
