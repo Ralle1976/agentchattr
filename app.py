@@ -2315,15 +2315,7 @@ def _compare_versions(current: str, latest_tag: str) -> str:
             return "behind"
         return "current"
     except Exception:
-        # Fallback: simple tuple comparison
-        try:
-            cur_parts = tuple(int(x) for x in current.split("."))
-            lat_parts = tuple(int(x) for x in latest.split("."))
-            if cur_parts < lat_parts:
-                return "behind"
-            return "current"
-        except Exception:
-            return "unknown"
+        return "unknown"
 
 
 @app.get("/api/version_check")
@@ -2341,7 +2333,12 @@ async def version_check():
     comparison = _compare_versions(current, latest_tag)
 
     if comparison == "behind":
-        state = "upstream_update" if install_kind == "fork" else "update_available"
+        if install_kind == "official_git":
+            state = "update_available"
+        elif install_kind == "fork":
+            state = "upstream_update"
+        else:
+            state = "unknown"
     elif comparison == "current":
         state = "current"
     else:

@@ -436,7 +436,7 @@ The chat server and web UI are fully cross-platform (Python + browser).
 
 agentchattr is designed for **localhost use only** and includes several protections:
 
-- **Session token** — a random token is generated on each server start and injected into the web UI. All API and WebSocket requests must present this token. No external process can interact with the server without it.
+- **Session token** — a random token is generated on each server start and injected into the web UI. All API and WebSocket requests must present this token. No external process can interact with the server without it. Agent registration endpoints are additionally restricted to loopback addresses only.
 - **Origin checking** — the server rejects requests from origins that don't match `localhost` / `127.0.0.1`, preventing cross-origin and DNS rebinding attacks.
 - **No `shell=True`** — subprocess calls avoid shell injection by passing argument lists directly.
 - **Network binding warning** — if the server is configured to bind to a non-localhost address, it refuses to start unless you explicitly pass `--allow-network`.
