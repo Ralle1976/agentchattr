@@ -61,8 +61,24 @@ window._messageRenderers['job_created'] = function (el, msg) {
 };
 
 // ---------------------------------------------------------------------------
-// Job breadcrumb collapsing (called from appendMessage in chat.js)
+// Job breadcrumb helpers
 // ---------------------------------------------------------------------------
+
+function _unhideResolvedBreadcrumbs() {
+    // After jobsData is populated (e.g. from WS 'jobs' event), unhide any
+    // breadcrumbs that were hidden during history replay because jobsData
+    // was still empty when the job_created message was rendered.
+    const validIds = new Set(jobsData.map(a => a.id));
+    document.querySelectorAll('.job-breadcrumb[style*="display: none"]').forEach(el => {
+        const link = el.querySelector('.job-breadcrumb-link');
+        if (!link) return;
+        const onclick = link.getAttribute('onclick') || '';
+        const m = onclick.match(/openJobFromBreadcrumb\((\d+)\)/);
+        if (m && validIds.has(Number(m[1]))) {
+            el.style.display = '';
+        }
+    });
+}
 
 function _collapseJobBreadcrumbs(container, newEl) {
     // Collect consecutive job-breadcrumb elements ending with newEl
@@ -111,6 +127,24 @@ function _collapseJobBreadcrumbs(container, newEl) {
 
     // Insert group at the position where the crumbs were
     container.insertBefore(group, insertBefore);
+}
+
+function _repairJobGroup(group) {
+    if (!group || !group.classList.contains('job-group')) return;
+    const listEl = group.querySelector('.job-group-list');
+    const remaining = listEl ? listEl.querySelectorAll('.job-breadcrumb') : [];
+    if (remaining.length === 0) {
+        group.remove();
+    } else if (remaining.length === 1) {
+        // Unwrap single breadcrumb out of the group
+        group.replaceWith(remaining[0]);
+    } else {
+        // Update the count text
+        const summary = group.querySelector('.job-group-summary');
+        if (summary) {
+            summary.innerHTML = summary.innerHTML.replace(/\d+ jobs were started/, `${remaining.length} jobs were started`);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1415,15 +1449,15 @@ function handleJobEvent(action, data) {
     } else if (action === 'delete') {
         jobsData = jobsData.filter(a => a.id !== data.id);
         delete jobUnread[data.id];
-        // Remove breadcrumb from timeline
+        // Remove breadcrumb from timeline and fix stale group wrappers
         document.querySelectorAll('.job-breadcrumb').forEach(el => {
-            const msgData = el.dataset;
-            // Check the onclick handler for matching job ID
             const link = el.querySelector('.job-breadcrumb-link');
             if (link) {
                 const onclick = link.getAttribute('onclick') || '';
                 if (onclick.includes(`openJobFromBreadcrumb(${data.id})`)) {
+                    const group = el.closest('.job-group');
                     el.remove();
+                    if (group) _repairJobGroup(group);
                 }
             }
         });
@@ -2023,6 +2057,8 @@ Hub.on('jobs', function (event) {
     syncJobUnreadCache();
     updateJobsBadge();
     renderJobsList();
+    // Unhide breadcrumbs that were hidden because jobsData was empty during replay
+    _unhideResolvedBreadcrumbs();
 });
 
 Hub.on('job', function (event) {
