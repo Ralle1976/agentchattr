@@ -1553,9 +1553,6 @@ const SLASH_COMMANDS = [
     { cmd: '/poetry sonnet', desc: 'Agents write a sonnet about the codebase', broadcast: true },
     { cmd: '/summary', desc: 'Summarize recent messages — tag an agent (e.g. /summary @claude)', broadcast: false, needsMention: true },
     { cmd: '/summarise', desc: 'Summarize recent messages — tag an agent (e.g. /summarise @claude)', broadcast: false, needsMention: true, hidden: true },
-    { cmd: '/schedule', desc: 'Schedule a recurring prompt (e.g. /schedule @claude "summarise" every 1h)', broadcast: false, needsMention: true },
-    { cmd: '/schedules', desc: 'View active scheduled tasks', broadcast: false },
-    { cmd: '/unschedule', desc: 'Cancel a scheduled task (e.g. /unschedule <id>)', broadcast: false },
     { cmd: '/continue', desc: 'Resume after loop guard pauses', broadcast: false },
     { cmd: '/clear', desc: 'Clear messages in current channel', broadcast: false },
 ];
@@ -1824,11 +1821,6 @@ function sendMessage() {
             showSlashHint(`Tag an agent: ${canonical} @claude`);
             // Trigger mention autocomplete for the '@'
             input.dispatchEvent(new Event('input', { bubbles: true }));
-            return;
-        }
-        // /schedule needs prompt + interval after the mention
-        if (cmdWord === '/schedule' && /@\w/.test(text) && !/every\s|daily\s/i.test(text)) {
-            showSlashHint('Add prompt + interval: /schedule @agent "task" every 1h');
             return;
         }
     }

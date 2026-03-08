@@ -1101,47 +1101,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         store.add("system", "Resuming agent conversation...", msg_type="system", channel=channel)
                         await broadcast_status()
                         continue
-                    if cmd == "/schedules":
-                        await websocket.send_text(json.dumps({"type": "schedules", "data": schedules.list_all()}))
-                        continue
-                    if cmd == "/schedule":
-                        # Parse: /schedule @agent "prompt" every 1h
-                        import shlex
-                        try:
-                            parts = shlex.split(text)
-                        except ValueError:
-                            parts = text.split()
-                        targets = [p.lstrip("@") for p in parts[1:] if p.startswith("@")]
-                        spec_match = _re.search(r"(every\s+\d+\s*\w+|daily\s+at\s+\d{1,2}:\d{2})", text, _re.I)
-                        spec = spec_match.group(0) if spec_match else ""
-                        # Remove /schedule, @mentions, and spec from text to get prompt
-                        remainder = _re.sub(r"^/schedule\b\s*", "", text, flags=_re.I)
-                        for t in targets:
-                            remainder = _re.sub(r"@" + _re.escape(t) + r"\b\s*", "", remainder)
-                        if spec:
-                            remainder = remainder.replace(spec, "")
-                        prompt = remainder.strip().strip('"\'').strip()
-                        if not targets or not prompt or not spec:
-                            store.add("system", 'Usage: /schedule @agent "prompt" every 1h (or daily at 09:00)', msg_type="system", channel=channel)
-                        else:
-                            interval_sec, daily_at = parse_schedule_spec(spec)
-                            if interval_sec is None:
-                                store.add("system", f"Invalid schedule spec: {spec}", msg_type="system", channel=channel)
-                            else:
-                                s = schedules.create(prompt=prompt, targets=targets, channel=channel, interval_seconds=interval_sec, daily_at=daily_at, created_by=sender)
-                                store.add("system", f"Schedule created (id={s['id']}): {spec}", msg_type="system", channel=channel)
-                        continue
-                    if cmd == "/unschedule":
-                        sid = cmd_parts[1] if len(cmd_parts) > 1 else ""
-                        if not sid:
-                            store.add("system", "Usage: /unschedule <id>", msg_type="system", channel=channel)
-                        else:
-                            removed = schedules.delete(sid)
-                            if removed:
-                                store.add("system", f"Schedule {sid} removed.", msg_type="system", channel=channel)
-                            else:
-                                store.add("system", f"Schedule {sid} not found.", msg_type="system", channel=channel)
-                        continue
                     # Broadcast slash commands — expand without storing the raw command.
                     # _handle_new_message will store the expanded version.
                     if cmd in ("/hatmaking", "/artchallenge", "/roastreview", "/poetry"):
