@@ -72,7 +72,7 @@ def compute_next_run(
                 target = target + timedelta(days=1)
                 ts = target.timestamp()
             return ts
-        return now
+        return now + interval_seconds
     if daily_at:
         from datetime import datetime, timedelta
         last_dt = datetime.fromtimestamp(last_run)

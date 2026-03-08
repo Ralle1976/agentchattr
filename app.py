@@ -471,13 +471,13 @@ def configure(cfg: dict, session_token: str = ""):
                     sender = s.get("created_by", "user")
                     mention_str = " ".join(f"@{t}" for t in targets)
                     full_text = f"{mention_str} {prompt}" if mention_str else prompt
+                    # store.add triggers _handle_new_message via callback,
+                    # which routes @mentions to agents — no manual trigger needed.
                     store.add(
                         sender,
                         full_text,
                         channel=channel,
                     )
-                    for name in targets:
-                        agents.trigger_sync(name, f"{sender}: {prompt}", channel=channel)
                     if s.get("one_shot"):
                         schedules.delete(s["id"])
                     else:
@@ -1112,10 +1112,15 @@ async def websocket_endpoint(websocket: WebSocket):
                         except ValueError:
                             parts = text.split()
                         targets = [p.lstrip("@") for p in parts[1:] if p.startswith("@")]
-                        quoted = [p for p in parts[1:] if not p.startswith("@") and not _re.match(r"(every|daily)", p, _re.I)]
-                        spec_match = _re.search(r"(every\s+\S+\s*\S*|daily\s+at\s+\d{1,2}:\d{2})", text, _re.I)
+                        spec_match = _re.search(r"(every\s+\d+\s*\w+|daily\s+at\s+\d{1,2}:\d{2})", text, _re.I)
                         spec = spec_match.group(0) if spec_match else ""
-                        prompt = " ".join(quoted).strip('"\'') if quoted else ""
+                        # Remove /schedule, @mentions, and spec from text to get prompt
+                        remainder = _re.sub(r"^/schedule\b\s*", "", text, flags=_re.I)
+                        for t in targets:
+                            remainder = _re.sub(r"@" + _re.escape(t) + r"\b\s*", "", remainder)
+                        if spec:
+                            remainder = remainder.replace(spec, "")
+                        prompt = remainder.strip().strip('"\'').strip()
                         if not targets or not prompt or not spec:
                             store.add("system", 'Usage: /schedule @agent "prompt" every 1h (or daily at 09:00)', msg_type="system", channel=channel)
                         else:
