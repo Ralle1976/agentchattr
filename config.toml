@@ -44,7 +44,7 @@ inject_delay = 1.0
 [agents.kilo]
 command = "kilo"
 cwd = ".."
-color = "#ff6b35"
+color = "#f7f677"
 label = "Kilo"
 
 [routing]
