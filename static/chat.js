@@ -2434,6 +2434,17 @@ function buildMentionToggles() {
 let recognition = null;
 let isListening = false;
 
+function focusComposerInput() {
+    const input = document.getElementById('input');
+    if (!input) return null;
+    try {
+        input.focus({ preventScroll: true });
+    } catch (_) {
+        input.focus();
+    }
+    return input;
+}
+
 function toggleVoice() {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
         alert('Speech recognition not supported — use Chrome or Edge.');
@@ -2451,13 +2462,17 @@ function toggleVoice() {
     recognition.continuous = true;
     recognition.interimResults = true;
 
-    const input = document.getElementById('input');
+    const input = focusComposerInput();
+    if (!input) return;
     const baseText = input.value;
     let finalTranscript = '';
+    const micButton = document.getElementById('mic');
 
     recognition.onstart = () => {
         isListening = true;
-        document.getElementById('mic').classList.add('recording');
+        micButton.classList.add('recording');
+        micButton.setAttribute('aria-pressed', 'true');
+        focusComposerInput();
     };
 
     recognition.onresult = (e) => {
@@ -2472,29 +2487,54 @@ function toggleVoice() {
             }
         }
         input.value = baseText + (baseText ? ' ' : '') + finalTranscript + interim;
+        focusComposerInput();
         input.style.height = 'auto';
         input.style.height = Math.min(input.scrollHeight, 120) + 'px';
     };
 
     recognition.onerror = (e) => {
         console.error('Speech error:', e.error);
-        stopVoice();
+        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+            alert('Microphone access was blocked. Allow microphone access in Chrome and try again.');
+            stopVoice();
+        } else if (e.error === 'no-speech' || e.error === 'aborted') {
+            // no-speech: Chrome fires after ~5s silence — keep listening
+            // aborted: fires during restart cycle — safe to ignore
+            console.log('Speech:', e.error, '— still listening...');
+        } else {
+            stopVoice();
+        }
     };
 
     recognition.onend = () => {
-        stopVoice();
+        // If still supposed to be listening (e.g. after no-speech), restart
+        if (isListening) {
+            try { recognition.start(); } catch (_) { stopVoice(); }
+        } else {
+            stopVoice();
+        }
     };
 
-    recognition.start();
+    try {
+        recognition.start();
+    } catch (e) {
+        console.error('Speech start failed:', e);
+        stopVoice();
+    }
 }
 
 function stopVoice() {
     isListening = false;
-    document.getElementById('mic').classList.remove('recording');
+    const micButton = document.getElementById('mic');
+    if (micButton) {
+        micButton.classList.remove('recording');
+        micButton.setAttribute('aria-pressed', 'false');
+    }
     if (recognition) {
         try { recognition.stop(); } catch (_) {}
         recognition = null;
     }
+    focusComposerInput();
 }
 
 // --- Image modal ---
