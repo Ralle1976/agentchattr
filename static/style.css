@@ -500,7 +500,6 @@ header h1 {
 
 /* Right-side pills in channel bar */
 .channel-bar-right {
-    margin-left: auto;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -1196,15 +1195,26 @@ main#timeline {
     z-index: 1;
 }
 
-#channel-tabs {
+.channel-main {
     flex: 1;
     min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    overflow: hidden;
+}
+
+#channel-tabs {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
     display: flex;
     gap: 2px;
     overflow-x: auto;
     scrollbar-width: none;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
 }
 
 #channel-tabs::-webkit-scrollbar { display: none; }
@@ -1326,7 +1336,6 @@ main#timeline {
 
 /* Add button — sits after tabs */
 .channel-add {
-    margin-left: 8px;
     background: none;
     border: none;
     color: var(--text-dim);
@@ -2515,8 +2524,8 @@ pre:hover .code-copy-btn { opacity: 1; }
 }
 
 .role-preset-chip.active {
-    background: var(--agent-color, var(--accent));
-    color: var(--text-on-accent);
+    background: var(--accent);
+    color: var(--text-on-accent, #fff);
     border-color: transparent;
 }
 
@@ -2631,6 +2640,127 @@ pre:hover .code-copy-btn { opacity: 1; }
 .bubble-role-input::placeholder {
     color: var(--text-dim);
 }
+
+/* --- Pill popover (rename + role) --- */
+.pill-popover {
+    position: fixed;
+    z-index: 1000;
+    min-width: 260px;
+    max-width: 320px;
+    background: var(--bg-elevated, var(--bg-header));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-md, 12px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.pill-popover-section {
+    margin-bottom: var(--space-md, 12px);
+}
+.pill-popover-section:last-child { margin-bottom: 0; }
+.pill-popover-label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+.pill-popover-rename-row {
+    display: flex;
+    gap: 8px;
+}
+.pill-popover-input {
+    flex: 1;
+    background: var(--bg-input, rgba(0,0,0,0.2));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 6px 10px;
+    font-size: 13px;
+    color: var(--text);
+    font-family: inherit;
+}
+.pill-popover-input:focus { border-color: var(--accent); outline: none; }
+.pill-popover-confirm {
+    background: var(--agent-color, var(--accent));
+    color: var(--text-on-accent, #000);
+    border: none;
+    padding: 6px 14px;
+    border-radius: var(--radius-md);
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+}
+.pill-popover-confirm:hover { filter: brightness(1.1); }
+.pill-popover-roles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.pill-popover-roles .pill-role-chip {
+    font-size: 11px;
+    padding: 4px 10px;
+}
+/* Custom role chip — trash inside, confirm mode */
+.pill-custom-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    position: relative;
+    transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+.pill-custom-trash {
+    display: inline-flex;
+    align-items: center;
+    opacity: 0;
+    margin-left: 2px;
+    color: #fff;
+    transition: opacity 0.15s, color 0.15s;
+    cursor: pointer;
+}
+.pill-custom-chip:hover .pill-custom-trash { opacity: 0.8; }
+.pill-custom-trash:hover { opacity: 1 !important; color: var(--error-color); }
+.pill-custom-confirm {
+    display: none;
+    align-items: center;
+    gap: 2px;
+    margin-left: 4px;
+}
+.pill-custom-confirm span {
+    cursor: pointer;
+    padding: 0 3px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    transition: background 0.15s;
+}
+.pill-custom-confirm span:hover { background: var(--white-08); }
+.pill-confirm-yes { color: var(--error-color); }
+.pill-confirm-no { color: var(--text-dim); }
+/* Confirm-delete state: red chip, hide trash, show tick/cross */
+.pill-custom-chip.confirm-delete {
+    color: var(--error-color);
+    border-color: var(--error-color);
+    background: rgba(239, 68, 68, 0.1);
+}
+.pill-custom-chip.confirm-delete .pill-custom-trash { display: none; }
+.pill-custom-chip.confirm-delete .pill-custom-confirm { display: inline-flex; }
+.pill-popover-custom-row {
+    margin-top: 8px;
+}
+.pill-popover-custom-input {
+    width: 100%;
+    background: var(--bg-input, rgba(0,0,0,0.2));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 6px 10px;
+    font-size: 12px;
+    color: var(--text);
+    font-family: inherit;
+    box-sizing: border-box;
+}
+.pill-popover-custom-input:focus { border-color: var(--accent); outline: none; }
+.pill-popover-custom-input::placeholder { color: var(--text-dim); }
 
 /* --- Slash command hint --- */
 

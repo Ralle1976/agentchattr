@@ -23,6 +23,7 @@ let activeChannel = localStorage.getItem('agentchattr-channel') || 'general';
 let channelList = ['general'];
 let channelUnread = {};  // { channelName: count }
 let agentHats = {};  // { agent_name: svg_string }
+window.customRoles = [];  // saved custom roles from settings
 let schedulesList = [];  // array of schedule objects from server
 
 // Expose globals that extracted modules (sessions.js, jobs.js) read via window.*
@@ -1090,10 +1091,11 @@ function buildStatusPills() {
         pill.title = `@${name}`;  // Tooltip: canonical name for manual @-typing
         pill.style.setProperty('--agent-color', cfg.color || '#4ade80');
         pill.innerHTML = `<span class="status-dot"></span><span class="status-label">${escapeHtml(cfg.label || name)}</span>`;
-        // Left-click to rename or name pending instance
-        pill.addEventListener('click', () => {
+        // Left-click to open pill popover (rename + role)
+        pill.addEventListener('click', (e) => {
+            e.stopPropagation();
             const mode = cfg.state === 'pending' ? 'pending' : 'rename';
-            showAgentNameModal({
+            showPillPopover(pill, {
                 name, label: cfg.label || name, color: cfg.color || '#888',
                 base: cfg.base || '', mode,
             });
@@ -1102,6 +1104,21 @@ function buildStatusPills() {
     }
     enableDragScroll(container);
 }
+
+// --- Role presets (shared by pill popover + bubble picker) ---
+
+const ROLE_PRESETS = [
+    { label: 'Planner', emoji: '📋' },
+    { label: 'Designer', emoji: '✨' },
+    { label: 'Architect', emoji: '🏛️' },
+    { label: 'Builder', emoji: '🔨' },
+    { label: 'Reviewer', emoji: '🔍' },
+    { label: 'Researcher', emoji: '🔬' },
+    { label: 'Red Team', emoji: '🛡️' },
+    { label: 'Wry', emoji: '🍸' },
+    { label: 'Unhinged', emoji: '🤪' },
+    { label: 'Hype', emoji: '🎉' },
+];
 
 // --- Agent naming lightbox ---
 
@@ -1114,7 +1131,8 @@ function _showNextPendingName() {
     // Only show if still pending in agentConfig
     const cfg = agentConfig[next.name];
     if (cfg && cfg.state === 'pending') {
-        showAgentNameModal({ ...next, mode: 'pending' });
+        const pillEl = document.getElementById(`status-${next.name}`);
+        showPillPopover(pillEl || null, { ...next, mode: 'pending' });
     } else {
         _showNextPendingName(); // skip stale entries
     }
@@ -1214,6 +1232,140 @@ function _closeAgentNameModal() {
     setTimeout(_showNextPendingName, 200);
 }
 
+// --- Pill popover (rename + role) ---
+
+function showPillPopover(pillEl, opts) {
+    if (opts.mode === 'pending') _nameModalActive = true;
+
+    document.querySelectorAll('.pill-popover').forEach(p => p.remove());
+
+    const popover = document.createElement('div');
+    popover.className = 'pill-popover';
+    popover.style.setProperty('--agent-color', opts.color);
+
+    const currentRole = (_agentRoles[opts.name] || '').toLowerCase();
+    const roleChipsHtml = ROLE_PRESETS.map(p =>
+        `<button class="role-preset-chip pill-role-chip ${currentRole === p.label.toLowerCase() ? 'active' : ''}" data-role="${escapeHtml(p.label)}">${p.emoji} ${escapeHtml(p.label)}</button>`
+    ).join('');
+    const customChipsHtml = (window.customRoles || [])
+        .filter(r => r && !ROLE_PRESETS.some(p => p.label.toLowerCase() === r.toLowerCase()))
+        .map(r =>
+            `<button class="role-preset-chip pill-role-chip pill-custom-chip ${currentRole === r.toLowerCase() ? 'active' : ''}" data-role="${escapeHtml(r)}"><span class="pill-custom-label">${escapeHtml(r)}</span><span class="pill-custom-trash"><svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M3 4h10M6 4V3h4v1M5 4v8.5h6V4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="pill-custom-confirm"><span class="pill-confirm-yes">&#10003;</span><span class="pill-confirm-no">&#10005;</span></span></button>`
+        ).join('');
+
+    popover.innerHTML = `
+        <div class="pill-popover-section">
+            <label class="pill-popover-label">${opts.mode === 'pending' ? 'Name this agent' : 'Rename'}</label>
+            <div class="pill-popover-rename-row">
+                <input type="text" class="pill-popover-input" value="${escapeHtml(opts.label)}" maxlength="24" spellcheck="false" />
+                <button class="pill-popover-confirm">${opts.mode === 'pending' ? 'Confirm' : 'Rename'}</button>
+            </div>
+        </div>
+        <div class="pill-popover-section">
+            <label class="pill-popover-label">Role</label>
+            <div class="pill-popover-roles">
+                <button class="role-preset-chip pill-role-chip ${!currentRole ? 'active' : ''}" data-role="">None</button>
+                ${roleChipsHtml}
+                ${customChipsHtml}
+            </div>
+            <div class="pill-popover-custom-row">
+                <input type="text" class="pill-popover-custom-input" placeholder="Custom role..." maxlength="20" />
+            </div>
+        </div>
+    `;
+
+    const inputEl = popover.querySelector('.pill-popover-input');
+    const confirmBtn = popover.querySelector('.pill-popover-confirm');
+    const customInput = popover.querySelector('.pill-popover-custom-input');
+
+    const closePopover = () => {
+        popover.remove();
+        document.removeEventListener('click', outsideClickHandler, true);
+        if (opts.mode === 'pending') {
+            _nameModalActive = false;
+            setTimeout(_showNextPendingName, 200);
+        }
+    };
+
+    const outsideClickHandler = (e) => {
+        if (!popover.contains(e.target) && !(pillEl && pillEl.contains(e.target))) {
+            closePopover();
+        }
+    };
+
+    confirmBtn.addEventListener('click', () => {
+        const label = inputEl.value.trim();
+        if (!label) return;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            if (opts.mode === 'pending') {
+                ws.send(JSON.stringify({ type: 'name_pending', name: opts.name, label }));
+            } else {
+                ws.send(JSON.stringify({ type: 'rename_agent', name: opts.name, label }));
+            }
+        }
+        closePopover();
+    });
+
+    inputEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { confirmBtn.click(); e.preventDefault(); }
+        if (e.key === 'Escape') { closePopover(); e.preventDefault(); }
+    });
+
+    popover.querySelectorAll('.pill-role-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+            const role = chip.dataset.role || '';
+            _setRole(opts.name, role);
+            closePopover();
+        });
+    });
+
+    // Custom chip: trash icon → confirm mode (red chip with tick/cross)
+    popover.querySelectorAll('.pill-custom-chip').forEach(chip => {
+        const trash = chip.querySelector('.pill-custom-trash');
+        const confirmEl = chip.querySelector('.pill-custom-confirm');
+        const yesBtn = chip.querySelector('.pill-confirm-yes');
+        const noBtn = chip.querySelector('.pill-confirm-no');
+
+        if (trash) trash.addEventListener('click', (e) => {
+            e.stopPropagation();
+            chip.classList.add('confirm-delete');
+        });
+        if (yesBtn) yesBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            _deleteCustomRole(chip.dataset.role);
+            chip.remove();
+        });
+        if (noBtn) noBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            chip.classList.remove('confirm-delete');
+        });
+    });
+
+    customInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            const val = customInput.value.trim();
+            if (val) { _setRole(opts.name, val); closePopover(); }
+            e.preventDefault();
+        }
+        if (e.key === 'Escape') { closePopover(); e.preventDefault(); }
+    });
+
+    document.body.appendChild(popover);
+
+    if (pillEl) {
+        const rect = pillEl.getBoundingClientRect();
+        popover.style.top = `${rect.bottom + 8}px`;
+        popover.style.left = `${Math.min(rect.left, window.innerWidth - 280)}px`;
+    } else {
+        popover.style.top = '50%';
+        popover.style.left = '50%';
+        popover.style.transform = 'translate(-50%, -50%)';
+    }
+
+    setTimeout(() => document.addEventListener('click', outsideClickHandler, true), 0);
+    inputEl.focus();
+}
+
 // --- Bubble role picker ---
 
 function showBubbleRolePicker(btn, agentName) {
@@ -1223,19 +1375,6 @@ function showBubbleRolePicker(btn, agentName) {
         if (msg) msg.style.zIndex = '';
         p.remove();
     });
-
-    const ROLE_PRESETS = [
-        { label: 'Planner', emoji: '📋' },
-        { label: 'Designer', emoji: '✨' },
-        { label: 'Architect', emoji: '🏛️' },
-        { label: 'Builder', emoji: '🔨' },
-        { label: 'Reviewer', emoji: '🔍' },
-        { label: 'Researcher', emoji: '🔬' },
-        { label: 'Red Team', emoji: '🛡️' },
-        { label: 'Wry', emoji: '🍸' },
-        { label: 'Unhinged', emoji: '🤪' },
-        { label: 'Hype', emoji: '🎉' },
-    ];
 
     const currentRole = (_agentRoles[agentName] || '').toLowerCase();
     const picker = document.createElement('div');
@@ -1257,6 +1396,16 @@ function showBubbleRolePicker(btn, agentName) {
         picker.appendChild(chip);
     }
 
+    // Saved custom roles
+    for (const r of (window.customRoles || [])) {
+        if (!r || ROLE_PRESETS.some(p => p.label.toLowerCase() === r.toLowerCase())) continue;
+        const chip = document.createElement('button');
+        chip.className = 'role-preset-chip' + (currentRole === r.toLowerCase() ? ' active' : '');
+        chip.textContent = r;
+        chip.addEventListener('click', () => { _setRole(agentName, r); closePicker(); });
+        picker.appendChild(chip);
+    }
+
     // Custom text input
     const customRow = document.createElement('div');
     customRow.className = 'bubble-role-custom';
@@ -1264,7 +1413,7 @@ function showBubbleRolePicker(btn, agentName) {
     customInput.type = 'text';
     customInput.className = 'bubble-role-input';
     customInput.placeholder = 'Custom...';
-    customInput.maxLength = 30;
+    customInput.maxLength = 20;
     customInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
             const val = customInput.value.trim();
@@ -1339,6 +1488,36 @@ function _setRole(agentName, role) {
     // Optimistic update
     _agentRoles[agentName] = role;
     _syncBubbleRolePills(agentName);
+    // If custom role (not in presets), auto-save it
+    if (role && !ROLE_PRESETS.some(p => p.label.toLowerCase() === role.toLowerCase())) {
+        _addCustomRole(role);
+    }
+}
+
+function _addCustomRole(role) {
+    const list = window.customRoles || [];
+    const lower = role.trim().toLowerCase();
+    if (list.some(r => r.toLowerCase() === lower)) return;
+    const updated = [...list, role.trim()].slice(-20);
+    window.customRoles = updated;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'update_settings', data: { custom_roles: updated } }));
+    }
+}
+
+function _deleteCustomRole(role) {
+    const lower = role.trim().toLowerCase();
+    const updated = (window.customRoles || []).filter(r => r.toLowerCase() !== lower);
+    window.customRoles = updated;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'update_settings', data: { custom_roles: updated } }));
+    }
+    // Unassign from any agents currently using this role
+    for (const [agentName, agentRole] of Object.entries(_agentRoles)) {
+        if (agentRole && agentRole.toLowerCase() === lower) {
+            _setRole(agentName, '');
+        }
+    }
 }
 
 // --- Status ---
@@ -1430,6 +1609,9 @@ function applySettings(data) {
     }
     if (data.rules_refresh_interval !== undefined) {
         document.getElementById('setting-rules-refresh').value = String(data.rules_refresh_interval);
+    }
+    if (Array.isArray(data.custom_roles)) {
+        window.customRoles = data.custom_roles;
     }
     if (data.channels && Array.isArray(data.channels)) {
         channelList = data.channels;

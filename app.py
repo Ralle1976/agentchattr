@@ -54,6 +54,7 @@ room_settings: dict = {
     "channels": ["general"],
     "history_limit": "all",
     "contrast": "normal",
+    "custom_roles": [],
 }
 
 # Channel validation
@@ -1264,6 +1265,11 @@ async def websocket_endpoint(websocket: WebSocket):
                             room_settings["history_limit"] = max(1, min(val_int, 10000))
                         except (ValueError, TypeError):
                             pass
+                if "custom_roles" in new and isinstance(new["custom_roles"], list):
+                    room_settings["custom_roles"] = [
+                        str(r).strip()[:20] for r in new["custom_roles"]
+                        if isinstance(r, str) and r.strip()
+                    ][:20]
                 _save_settings()
                 await broadcast_settings()
 
