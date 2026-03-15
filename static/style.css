@@ -2805,6 +2805,11 @@ pre:hover .code-copy-btn { opacity: 1; }
 .pill-popover-color-input::-webkit-color-swatch-wrapper { padding: 0; }
 .pill-popover-color-input::-webkit-color-swatch { border: none; border-radius: 4px; }
 .pill-popover-color-input::-moz-color-swatch { border: none; border-radius: 4px; }
+.pill-popover-color-input.active {
+    border-color: #fff;
+    box-shadow: 0 0 0 2px var(--accent, #888);
+    transform: scale(1.15);
+}
 .pill-popover-color-reset {
     background: var(--white-06);
     border: 1px solid var(--border);

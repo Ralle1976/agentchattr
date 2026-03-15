@@ -1098,9 +1098,12 @@ function buildStatusPills() {
         pill.title = `@${name}`;  // Tooltip: canonical name for manual @-typing
         pill.style.setProperty('--agent-color', colorOverrides[name] || cfg.color || '#4ade80');
         pill.innerHTML = `<span class="status-dot"></span><span class="status-label">${escapeHtml(cfg.label || name)}</span>`;
-        // Left-click to open pill popover (rename + role)
+        // Left-click to toggle pill popover (rename + role + color)
         pill.addEventListener('click', (e) => {
             e.stopPropagation();
+            // Toggle: close if this pill's popover is already open
+            const existing = document.querySelector(`.pill-popover[data-agent="${name}"]`);
+            if (existing) { existing.remove(); return; }
             const mode = cfg.state === 'pending' ? 'pending' : 'rename';
             showPillPopover(pill, {
                 name, label: cfg.label || name, color: cfg.color || '#888',
@@ -1248,7 +1251,8 @@ function showPillPopover(pillEl, opts) {
 
     const popover = document.createElement('div');
     popover.className = 'pill-popover';
-    popover.style.setProperty('--agent-color', opts.color);
+    popover.dataset.agent = opts.name;
+    popover.style.setProperty('--agent-color', colorOverrides[opts.name] || opts.color);
 
     const currentRole = (_agentRoles[opts.name] || '').toLowerCase();
     const roleChipsHtml = ROLE_PRESETS.map(p =>
@@ -1279,18 +1283,31 @@ function showPillPopover(pillEl, opts) {
                 <input type="text" class="pill-popover-custom-input" placeholder="Custom role..." maxlength="20" />
             </div>
         </div>
-        <div class="pill-popover-section">
-            <label class="pill-popover-label">Color</label>
-            <div class="pill-popover-colors">
-                ${['#da7756','#10a37f','#4285f4','#8b5cf6','#f59e0b','#ef4444','#ec4899','#06b6d4','#84cc16','#f97316','#6366f1','#14b8a6','#ff6b35','#1783ff'].map(c =>
-                    `<button class="color-swatch ${(colorOverrides[opts.name] || opts.color || '').toLowerCase() === c.toLowerCase() ? 'active' : ''}" data-color="${c}" style="background:${c}" title="${c}"></button>`
-                ).join('')}
-            </div>
-            <div class="pill-popover-color-custom">
-                <input type="color" class="pill-popover-color-input" value="${colorOverrides[opts.name] || opts.color || '#888888'}" title="Pick custom color" />
-                <button class="pill-popover-color-reset" title="Reset to default">Reset</button>
-            </div>
-        </div>
+        ${(() => {
+            // Resolve the actual current color: override → pill CSS var → config → fallback
+            let current = colorOverrides[opts.name] || '';
+            if (!current && pillEl) {
+                const computed = getComputedStyle(pillEl).getPropertyValue('--agent-color').trim();
+                if (computed && !computed.startsWith('var(')) current = computed;
+            }
+            if (!current) current = opts.color || '';
+            current = current.toLowerCase();
+            const swatches = ['#ef4444','#da7756','#f97316','#f59e0b','#84cc16','#10a37f','#14b8a6','#06b6d4','#1783ff','#4285f4','#6366f1','#8b5cf6','#ec4899','#ff6b35'];
+            const matchesSwatch = swatches.some(c => current === c.toLowerCase());
+            const colorInputVal = (current && !current.startsWith('var(')) ? current : (opts.color || '#888888');
+            return `<div class="pill-popover-section">
+                <label class="pill-popover-label">Color</label>
+                <div class="pill-popover-colors">
+                    ${swatches.map(c =>
+                        `<button class="color-swatch ${current === c.toLowerCase() ? 'active' : ''}" data-color="${c}" style="background:${c}" title="${c}"></button>`
+                    ).join('')}
+                </div>
+                <div class="pill-popover-color-custom">
+                    <input type="color" class="pill-popover-color-input ${!matchesSwatch ? 'active' : ''}" value="${colorInputVal}" title="Pick custom color" />
+                    <button class="pill-popover-color-reset" title="Reset to default">Reset</button>
+                </div>
+            </div>`;
+        })()}
     `;
 
     const inputEl = popover.querySelector('.pill-popover-input');
@@ -1381,13 +1398,19 @@ function showPillPopover(pillEl, opts) {
         recolorMessages();
         // Rebuild mention toggles with new colors
         buildMentionToggles();
-        // Update active swatch
+        // Update active swatch + color input highlight
+        const swatchColors = [];
         popover.querySelectorAll('.color-swatch').forEach(s => {
-            s.classList.toggle('active', s.dataset.color.toLowerCase() === color.toLowerCase());
+            const match = s.dataset.color.toLowerCase() === color.toLowerCase();
+            s.classList.toggle('active', match);
+            swatchColors.push(s.dataset.color.toLowerCase());
         });
-        // Sync the native color input
         const colorInput = popover.querySelector('.pill-popover-color-input');
-        if (colorInput) colorInput.value = color;
+        if (colorInput) {
+            colorInput.value = color;
+            // Highlight color input if color doesn't match any swatch
+            colorInput.classList.toggle('active', !swatchColors.includes(color.toLowerCase()));
+        }
     };
 
     popover.querySelectorAll('.color-swatch').forEach(swatch => {
@@ -1425,8 +1448,18 @@ function showPillPopover(pillEl, opts) {
 
     if (pillEl) {
         const rect = pillEl.getBoundingClientRect();
+        const popoverWidth = 280;
+        let left;
+        // If pill is in the right half of the screen, align popover's right edge to pill's right edge
+        if (rect.right + popoverWidth - rect.width > window.innerWidth - 12) {
+            left = rect.right - popoverWidth;
+        } else {
+            left = rect.left;
+        }
+        // Final clamp to keep on screen
+        left = Math.max(12, Math.min(left, window.innerWidth - popoverWidth - 12));
         popover.style.top = `${rect.bottom + 8}px`;
-        popover.style.left = `${Math.min(rect.left, window.innerWidth - 280)}px`;
+        popover.style.left = `${left}px`;
     } else {
         popover.style.top = '50%';
         popover.style.left = '50%';
