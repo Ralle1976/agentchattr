@@ -20,6 +20,17 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
+REM Warn if ripgrep is missing (Gemini CLI can hang on init - upstream bug)
+where rg >nul 2>&1
+if %errorlevel% neq 0 (
+    echo.
+    echo   Warning: ripgrep (rg) not found on PATH.
+    echo   Gemini CLI can hang on "Initializing..." for several minutes.
+    echo   Fix: choco install ripgrep  or  winget install BurntSushi.ripgrep
+    echo   See: https://github.com/google-gemini/gemini-cli/issues/13986
+    echo.
+)
+
 REM Start server if not already running, then wait for it
 netstat -ano | findstr :8300 | findstr LISTENING >nul 2>&1
 if %errorlevel% neq 0 (
