@@ -341,10 +341,14 @@ def _do_import(zip_bytes, store, jobs_store, rules_store,
             existing_job_uids.add(job_uid)
             job_report["created"] += 1
         # Remap job_created breadcrumb messages to point at new job IDs
-        if _job_id_remap:
+        # Only touch imported messages (by uid), not pre-existing local ones
+        if _job_id_remap and imported_uid_to_local_id:
+            imported_local_ids = set(imported_uid_to_local_id.values())
             with store._lock:
                 for m in store._messages:
-                    if m.get("type") == "job_created" and isinstance(m.get("metadata"), dict):
+                    if (m.get("type") == "job_created"
+                            and m["id"] in imported_local_ids
+                            and isinstance(m.get("metadata"), dict)):
                         old_jid = m["metadata"].get("job_id")
                         if old_jid in _job_id_remap:
                             m["metadata"]["job_id"] = _job_id_remap[old_jid]
