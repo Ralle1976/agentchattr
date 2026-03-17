@@ -1681,6 +1681,58 @@ async def demote_proposal(msg_id: int):
     return updated or {"ok": True}
 
 
+@app.post("/api/messages/{msg_id}/resolve_decision")
+async def resolve_decision(msg_id: int, request: Request):
+    """Resolve an inline decision card by recording the chosen option."""
+    body = await request.json()
+    chosen = body.get("choice", "")
+    if not chosen:
+        return JSONResponse({"error": "choice is required"}, status_code=400)
+    # Atomic check + resolve under lock to prevent double-click race
+    error = None
+    channel = "general"
+    sender = ""
+    with store._lock:
+        msg = None
+        for m in store._messages:
+            if m["id"] == msg_id:
+                msg = m
+                break
+        if not msg:
+            error = ("message not found", 404)
+        elif msg.get("type") != "decision":
+            error = ("not a decision message", 400)
+        else:
+            meta = msg.get("metadata") or {}
+            if meta.get("resolved"):
+                error = ("already resolved", 400)
+            else:
+                valid_choices = meta.get("choices", [])
+                if valid_choices and chosen not in valid_choices:
+                    error = (f"invalid choice. Valid: {valid_choices}", 400)
+                else:
+                    meta["resolved"] = True
+                    meta["chosen"] = chosen
+                    msg["metadata"] = meta
+                    channel = msg.get("channel", "general")
+                    sender = msg.get("sender", "")
+                    store._rewrite()
+    if error:
+        return JSONResponse({"error": error[0]}, status_code=error[1])
+    # Post the chosen answer as a regular chat message tagged @sender
+    username = room_settings.get("username", "user")
+    reply_text = f"@{sender} {chosen}" if sender else chosen
+    try:
+        store.add(username, reply_text, reply_to=msg_id, channel=channel)
+    except Exception:
+        import traceback; traceback.print_exc()
+    # Broadcast updated decision card so the UI swaps buttons to resolved state
+    updated = store.get_by_id(msg_id)
+    if updated:
+        await _broadcast(json.dumps({"type": "message_update", "message": updated}))
+    return {"ok": True, "chosen": chosen}
+
+
 @app.post("/api/messages/{msg_id}/resolve_rule_proposal")
 async def resolve_rule_proposal(msg_id: int, request: Request):
     """Activate or dismiss a rule proposal."""

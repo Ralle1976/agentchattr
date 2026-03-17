@@ -3643,3 +3643,40 @@ footer {
 }
 
 
+
+/* --- Inline Decision Choices (inside chat bubble) --- */
+.decision-choices {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-subtle);
+}
+.decision-choice {
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid color-mix(in srgb, var(--bubble-color, var(--accent)) 40%, transparent);
+    background: color-mix(in srgb, var(--bubble-color, var(--accent)) 10%, transparent);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.15s, border-color 0.15s, opacity 0.3s ease, transform 0.3s ease;
+}
+.decision-choice:hover {
+    background: color-mix(in srgb, var(--bubble-color, var(--accent)) 25%, transparent);
+    border-color: color-mix(in srgb, var(--bubble-color, var(--accent)) 60%, transparent);
+}
+.decision-resolved {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-style: italic;
+    animation: decisionFadeIn 0.4s ease;
+}
+@keyframes decisionFadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}

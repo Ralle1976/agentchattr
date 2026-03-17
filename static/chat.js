@@ -381,7 +381,21 @@ function connectWebSocket() {
         const event = JSON.parse(e.data);
         // Emit through Hub for modules to subscribe (PR 1 seam)
         Hub.emit(event.type, event);
-        if (event.type === 'message') {
+        if (event.type === 'message_update') {
+            // Re-render an updated message in-place (e.g. decision card resolved)
+            const updated = event.message;
+            if (updated && updated.id) {
+                const existing = document.querySelector(`.message[data-id="${updated.id}"]`);
+                if (existing && updated.type === 'decision') {
+                    // Update just the choices area within the bubble
+                    const choicesEl = existing.querySelector('.decision-choices');
+                    const meta = updated.metadata || {};
+                    if (choicesEl && meta.resolved) {
+                        choicesEl.innerHTML = `<div class="decision-resolved">You chose: <strong>${escapeHtml(meta.chosen || '')}</strong></div>`;
+                    }
+                }
+            }
+        } else if (event.type === 'message') {
             // Play notification sound for new messages from others (not joins, not when focused)
             if (soundEnabled && !document.hasFocus() && event.data.type !== 'join' && event.data.type !== 'leave' && event.data.type !== 'summary' && event.data.sender && event.data.sender.toLowerCase() !== username.toLowerCase()) {
                 playNotificationSound(event.data.sender);
@@ -781,7 +795,20 @@ function appendMessage(msg) {
         const senderRole = _agentRoles[msg.sender] || '';
         const roleClass = senderRole ? 'bubble-role has-role' : 'bubble-role';
         const rolePillHtml = !isSelf ? `<button class="${roleClass}" onclick="showBubbleRolePicker(this, '${escapeHtml(msg.sender)}')" title="${senderRole ? escapeHtml(senderRole) : 'Set role'}">${senderRole || 'choose a role'}</button>` : '';
-        el.innerHTML = `<div class="todo-strip"></div>${isSelf ? '' : avatarHtml}<div class="chat-bubble" style="--bubble-color: ${senderColor}">${replyHtml}<div class="bubble-header"><span class="msg-sender" style="color: ${senderColor}">${escapeHtml(msg.sender)}</span>${rolePillHtml}<span class="msg-time">${msg.time || ''}</span></div><div class="msg-text">${textHtml}</div>${attachmentsHtml}<button class="convert-job-pill" onclick="startJobFromMessage(${msg.id}); event.stopPropagation();" title="Convert to job">convert to job</button><button class="bubble-copy" onclick="copyMessage(${msg.id}, event)" title="Copy message"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><div class="msg-actions"><button class="reply-btn" onclick="startReply(${msg.id}, event)">reply</button><button class="todo-hint" onclick="todoCycle(${msg.id}); event.stopPropagation();">${statusLabel}</button><button class="delete-btn" onclick="deleteClick(${msg.id}, event)" title="Delete">del</button></div>`;
+        // Inline decision choices (if present)
+        let choicesHtml = '';
+        const meta = msg.metadata || {};
+        const choicesList = meta.choices || [];
+        if (msg.type === 'decision' && choicesList.length > 0) {
+            if (meta.resolved) {
+                choicesHtml = `<div class="decision-choices"><div class="decision-resolved">You chose: <strong>${escapeHtml(meta.chosen || '')}</strong></div></div>`;
+            } else {
+                choicesHtml = '<div class="decision-choices">' + choicesList.map(c =>
+                    `<button class="decision-choice" onclick="resolveDecision(${msg.id}, '${escapeHtml(c).replace(/'/g, "\\'")}')">${escapeHtml(c)}</button>`
+                ).join('') + '</div>';
+            }
+        }
+        el.innerHTML = `<div class="todo-strip"></div>${isSelf ? '' : avatarHtml}<div class="chat-bubble" style="--bubble-color: ${senderColor}">${replyHtml}<div class="bubble-header"><span class="msg-sender" style="color: ${senderColor}">${escapeHtml(msg.sender)}</span>${rolePillHtml}<span class="msg-time">${msg.time || ''}</span></div><div class="msg-text">${textHtml}</div>${choicesHtml}${attachmentsHtml}<button class="convert-job-pill" onclick="startJobFromMessage(${msg.id}); event.stopPropagation();" title="Convert to job">convert to job</button><button class="bubble-copy" onclick="copyMessage(${msg.id}, event)" title="Copy message"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><div class="msg-actions"><button class="reply-btn" onclick="startReply(${msg.id}, event)">reply</button><button class="todo-hint" onclick="todoCycle(${msg.id}); event.stopPropagation();">${statusLabel}</button><button class="delete-btn" onclick="deleteClick(${msg.id}, event)" title="Delete">del</button></div>`;
         if (todoStatus) el.classList.add('msg-todo', `msg-todo-${todoStatus}`);
         if (msg.metadata?.session_output) el.classList.add('session-output');
 
@@ -3509,6 +3536,31 @@ document.addEventListener('click', (e) => {
 setInterval(() => {
     if (schedulesList.length > 0) renderSchedulesBar();
 }, 10000);
+
+// --- Decision card resolve (with fade animation) ---
+async function resolveDecision(msgId, choice) {
+    // Fade out buttons immediately
+    const msgEl = document.querySelector(`.message[data-id="${msgId}"]`);
+    const buttons = msgEl ? msgEl.querySelectorAll('.decision-choice') : [];
+    buttons.forEach(btn => { btn.style.opacity = '0.4'; btn.style.pointerEvents = 'none'; });
+    try {
+        const res = await fetch(`/api/messages/${msgId}/resolve_decision`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Session-Token': SESSION_TOKEN },
+            body: JSON.stringify({ choice }),
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            console.error('Failed to resolve decision:', err);
+            // Restore buttons on failure
+            buttons.forEach(btn => { btn.style.opacity = ''; btn.style.pointerEvents = ''; });
+        }
+    } catch (e) {
+        console.error('Decision resolve error:', e);
+        buttons.forEach(btn => { btn.style.opacity = ''; btn.style.pointerEvents = ''; });
+    }
+}
+window.resolveDecision = resolveDecision;
 
 // --- Start ---
 

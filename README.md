@@ -140,6 +140,13 @@ During a session, phase banners mark transitions in the timeline, a sticky sessi
 
 Sessions are channel-scoped (one active per channel) and survive page refreshes. Custom templates persist across restarts.
 
+### Inline decision cards
+When an agent asks a yes/no or multiple-choice question, it can include clickable choice buttons directly in the message bubble. Click a choice to send your answer as a tagged reply — no typing needed.
+
+Agents include choices via `chat_send(message="Should I merge?", choices=["Yes", "No", "Show diff first"])`. When `choices` is empty or omitted, the message renders normally. Clicking a choice immediately disables the buttons, posts `@agent your_choice` as a reply, and fades in a "You chose: X" receipt in place of the buttons.
+
+Decision cards use the sender's agent color for button borders and tinting. Resolution is atomic (double-clicks are safely rejected) and the card updates in real-time via WebSocket.
+
 ### Activity indicators
 Status pills show a spinning border in each agent's color when that agent is actively working — so you can minimize the terminals and still know at a glance who's busy. Detection works by hashing the agent's terminal screen buffer every second: if anything changes (spinner, streaming text, tool output), the pill lights up. When the screen stops changing, it stops instantly. Cross-platform — Windows uses `ReadConsoleOutputW`, Mac/Linux uses `tmux capture-pane`.
 

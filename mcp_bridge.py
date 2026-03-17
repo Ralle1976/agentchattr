@@ -186,6 +186,7 @@ def _resolve_tool_identity(
 def chat_send(
     sender: str,
     message: str,
+    choices: list[str] = [],
     image_path: str = "",
     reply_to: int = -1,
     channel: str = "general",
@@ -196,7 +197,13 @@ def chat_send(
     Optionally attach a local image by providing image_path (absolute path).
     Optionally reply to a message by providing reply_to (message ID).
     Optionally specify a channel (default: 'general').
-    Optionally specify a job_id to post into a job conversation instead of the main timeline."""
+    Optionally specify a job_id to post into a job conversation instead of the main timeline.
+    IMPORTANT: Always include the choices parameter. When asking a yes/no or
+    multiple-choice question, provide the options so the user can respond with
+    a single click:
+      chat_send(sender="claude", message="Should I merge?", choices=["Yes", "No", "Show diff first"])
+    For normal messages without choices, pass choices=[]:
+      chat_send(sender="claude", message="Done.", choices=[])"""
     sender, err = _resolve_tool_identity(sender, ctx, field_name="sender", required=True)
     if err:
         return err
@@ -300,8 +307,17 @@ def chat_send(
     if reply_id is not None and store.get_by_id(reply_id) is None:
         return f"Message #{reply_to} not found."
 
+    # Determine message type and metadata based on choices
+    msg_type = "chat"
+    metadata = None
+    clean_choices = [c for c in (choices if choices else []) if isinstance(c, str) and c.strip()]
+    if clean_choices:
+        msg_type = "decision"
+        metadata = {"choices": clean_choices, "resolved": False}
+
     msg = store.add(sender, message.strip(), attachments=attachments,
-                    reply_to=reply_id, channel=channel)
+                    reply_to=reply_id, channel=channel,
+                    msg_type=msg_type, metadata=metadata)
     _update_cursor(sender, [msg], channel)
     with _presence_lock:
         _presence[sender] = time.time()
