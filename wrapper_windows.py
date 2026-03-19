@@ -142,14 +142,7 @@ def get_activity_checker(pid_holder, agent_name="unknown", trigger_flag=None):
     _consecutive_idle = [0]
     _is_active = [False]
 
-    # Diagnostic log per agent
-    _debug_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), f"activity_debug_{agent_name}.log")
-    _debug_file = open(_debug_path, "w")
-    _poll_count = [0]
-
     def check():
-        _poll_count[0] += 1
-
         # External trigger: queue watcher injected a message → force active
         triggered = False
         if trigger_flag is not None and trigger_flag[0]:
@@ -161,10 +154,6 @@ def get_activity_checker(pid_holder, agent_name="unknown", trigger_flag=None):
         # Get buffer dimensions
         csbi = _CONSOLE_SCREEN_BUFFER_INFO()
         if not kernel32.GetConsoleScreenBufferInfo(handle, ctypes.byref(csbi)):
-            if triggered:
-                import time as _t
-                _debug_file.write(f"[{_t.strftime('%H:%M:%S')}] poll={_poll_count[0]} TRIGGERED active=True\n")
-                _debug_file.flush()
             return _is_active[0]
 
         rect = csbi.srWindow
@@ -212,17 +201,6 @@ def get_activity_checker(pid_holder, agent_name="unknown", trigger_flag=None):
             _consecutive_idle[0] += 1
             if _consecutive_idle[0] >= IDLE_COOLDOWN:
                 _is_active[0] = False
-
-        # Log: every poll when cells changed, every 10th poll otherwise, or on trigger
-        if n_changed > 0 or _poll_count[0] % 10 == 0 or triggered:
-            import time as _t
-            extra = " TRIGGERED" if triggered else ""
-            _debug_file.write(
-                f"[{_t.strftime('%H:%M:%S')}] poll={_poll_count[0]} "
-                f"changed={n_changed} significant={significant} "
-                f"idle_count={_consecutive_idle[0]} active={_is_active[0]}{extra}\n"
-            )
-            _debug_file.flush()
 
         return _is_active[0]
 
