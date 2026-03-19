@@ -47,8 +47,8 @@ def inject(text: str, *, tmux_session: str, delay: float = 0.3):
         ["tmux", "send-keys", "-t", tmux_session, "-l", text],
         capture_output=True,
     )
-    # Let TUI process the text before sending Enter (matches Windows wrapper)
-    time.sleep(delay)
+    # Scale delay with text length so longer prompts get more processing time
+    time.sleep(max(delay, len(text) * 0.001))
     subprocess.run(
         ["tmux", "send-keys", "-t", tmux_session, "Enter"],
         capture_output=True,

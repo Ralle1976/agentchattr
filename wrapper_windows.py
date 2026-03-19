@@ -56,15 +56,35 @@ def _write_key(handle, char: str, key_down: bool, vk: int = 0, scan: int = 0):
 
 
 def inject(text: str, *, delay: float = 0.3):
-    """Inject text + Enter into the current console via WriteConsoleInput."""
+    """Inject text + Enter into the current console via WriteConsoleInput.
+
+    Uses batch WriteConsoleInputW for the text (all records in one call)
+    then a separate Enter keystroke after a scaled delay.
+    """
     handle = kernel32.GetStdHandle(STD_INPUT_HANDLE)
 
-    for ch in text:
-        _write_key(handle, ch, True)
-        _write_key(handle, ch, False)
+    # Build all key events at once (key down + key up per character)
+    n_events = len(text) * 2
+    if n_events > 0:
+        records = (_INPUT_RECORD * n_events)()
+        idx = 0
+        for ch in text:
+            for key_down in (True, False):
+                rec = records[idx]
+                rec.EventType = KEY_EVENT
+                evt = rec.Event.KeyEvent
+                evt.bKeyDown = key_down
+                evt.wRepeatCount = 1
+                evt.uChar.UnicodeChar = ch
+                evt.wVirtualKeyCode = 0
+                evt.wVirtualScanCode = 0
+                idx += 1
+        written = wintypes.DWORD(0)
+        kernel32.WriteConsoleInputW(handle, records, n_events, ctypes.byref(written))
 
-    # Let TUI process the text before sending Enter
-    time.sleep(delay)
+    # Scale delay with text length so longer prompts get more processing time
+    scaled_delay = max(delay, len(text) * 0.001)
+    time.sleep(scaled_delay)
 
     _write_key(handle, "\r", True, vk=VK_RETURN, scan=0x1C)
     _write_key(handle, "\r", False, vk=VK_RETURN, scan=0x1C)

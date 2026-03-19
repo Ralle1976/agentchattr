@@ -501,7 +501,10 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
                     if first_mention and is_multi_instance:
                         prompt += _IDENTITY_HINT
                         first_mention = False
-                    inject_fn(prompt)
+                    # Flatten to single line — multi-line text triggers paste
+                    # detection in CLIs (Claude Code shows "[Pasted text +N]")
+                    # which can break injection of long session prompts
+                    inject_fn(prompt.replace("\n", " "))
         except Exception:
             pass
 
