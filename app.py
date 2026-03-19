@@ -360,7 +360,7 @@ def configure(cfg: dict, session_token: str = ""):
 
                 # Crash timeout: if a wrapper hasn't heartbeated for 60s,
                 # it's dead — deregister it to free the slot.
-                _CRASH_TIMEOUT = 60
+                _CRASH_TIMEOUT = 15
                 registered = set(registry.get_all_names())
                 for name in registered:
                     with mcp_bridge._presence_lock:
