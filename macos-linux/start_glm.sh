@@ -1,7 +1,5 @@
 #!/usr/bin/env sh
-# agentchattr — starts server (if not running) + MiniMax API agent wrapper
-# Usage: sh start_minimax.sh
-# Requires MINIMAX_API_KEY environment variable.
+# agentchattr - starts server (if not running) + GLM-5.1 API agent wrapper
 cd "$(dirname "$0")/.."
 
 PYTHON_BIN=""
@@ -39,38 +37,25 @@ is_server_running() {
 }
 
 # Auto-load API key from OpenCode auth if not set
-if [ -z "$MINIMAX_API_KEY" ] && [ -f "./load_api_keys.sh" ]; then
+if [ -z "$ZHIPU_API_KEY" ] && [ -f "./load_api_keys.sh" ]; then
     . ./load_api_keys.sh
 fi
-if [ -z "$MINIMAX_API_KEY" ]; then
-    echo "Error: MINIMAX_API_KEY not set and not found in OpenCode auth."
-    echo "Get an API key at https://platform.minimax.io"
+if [ -z "$ZHIPU_API_KEY" ]; then
+    echo "Error: ZHIPU_API_KEY not set and not found in OpenCode auth."
+    echo "Get an API key at https://z.ai/subscribe"
     exit 1
 fi
 
 ensure_venv
 
 if ! is_server_running; then
-    if [ "$(uname -s)" = "Darwin" ]; then
-        osascript -e "tell app \"Terminal\" to do script \"cd '$(pwd)' && .venv/bin/python run.py\"" > /dev/null 2>&1
-    else
-        if command -v gnome-terminal >/dev/null 2>&1; then
-            gnome-terminal -- sh -c "cd '$(pwd)' && .venv/bin/python run.py; printf 'Press Enter to close... '; read _"
-        elif command -v xterm >/dev/null 2>&1; then
-            xterm -e sh -c "cd '$(pwd)' && .venv/bin/python run.py" &
-        else
-            .venv/bin/python run.py > data/server.log 2>&1 &
-        fi
-    fi
-
+    .venv/bin/python run.py > data/server.log 2>&1 &
     i=0
     while [ "$i" -lt 30 ]; do
-        if is_server_running; then
-            break
-        fi
+        if is_server_running; then break; fi
         sleep 0.5
         i=$((i + 1))
     done
 fi
 
-.venv/bin/python wrapper_api.py minimax
+.venv/bin/python wrapper_api.py glm

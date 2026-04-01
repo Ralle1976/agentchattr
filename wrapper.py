@@ -151,6 +151,11 @@ _BUILTIN_DEFAULTS: dict[str, dict] = {
         "mcp_env_var": "KILO_CONFIG_CONTENT",
         "mcp_transport": "http",
     },
+    "opencode": {
+        "mcp_inject": "settings_file",
+        "mcp_settings_path": ".opencode-agentchattr.json",
+        "mcp_transport": "http",
+    },
 }
 
 _VALID_INJECT_MODES = {"settings_file", "env", "flag", "proxy_flag", "env_content"}

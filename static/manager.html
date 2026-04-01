@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgentChattr Manager</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0d1117; color: #c9d1d9;
+            min-height: 100vh; padding-bottom: 60px;
+        }
+        .container { max-width: 960px; margin: 0 auto; padding: 16px; }
+        header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 16px 0; border-bottom: 1px solid #21262d; margin-bottom: 20px;
+        }
+        header h1 { font-size: 1.4em; color: #f0f6fc; }
+        .back-link {
+            color: #58a6ff; text-decoration: none; font-size: 0.9em;
+            padding: 6px 12px; border: 1px solid #30363d; border-radius: 6px;
+        }
+        .back-link:hover { background: #161b22; }
+        .nuke-btn {
+            color: #da3633; font-size: 0.9em; cursor: pointer; background: none;
+            padding: 6px 12px; border: 1px solid #da3633; border-radius: 6px;
+            font-weight: 500; transition: all 0.15s;
+        }
+        .nuke-btn:hover { background: #da3633; color: #fff; }
+        .section { margin-bottom: 24px; }
+        .section-title {
+            font-size: 1.05em; color: #f0f6fc; margin-bottom: 10px;
+            padding-bottom: 6px; border-bottom: 1px solid #21262d;
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .section-title .count {
+            font-size: 0.8em; background: #21262d; color: #8b949e;
+            padding: 2px 8px; border-radius: 10px;
+        }
+        .section-title .count.active { background: #0d2818; color: #3fb950; }
+        .project-select {
+            width: 100%; padding: 10px 14px; background: #161b22; color: #c9d1d9;
+            border: 1px solid #30363d; border-radius: 8px; font-size: 1em;
+        }
+        .project-select:focus { border-color: #58a6ff; outline: none; }
+        .project-info { font-size: 0.85em; color: #8b949e; margin-top: 4px; }
+        .agent-grid, .strategy-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 10px;
+        }
+        .agent-card {
+            background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+            padding: 12px; display: flex; flex-direction: column; gap: 8px;
+            transition: border-color 0.2s;
+        }
+        .agent-card.online { border-color: #238636; }
+        .agent-card.starting { border-color: #d29922; }
+        .agent-card.not-installed { opacity: 0.35; }
+        .agent-header { display: flex; align-items: center; justify-content: space-between; }
+        .agent-name { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 0.95em; }
+        .agent-sub { font-size: 0.7em; color: #484f58; font-weight: 400; }
+        .agent-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+        .agent-dot.offline { background: #484f58; }
+        .agent-dot.starting { animation: pulse 1s infinite; }
+        .agent-dot.busy { animation: spin 1s linear infinite; box-shadow: 0 0 10px; }
+        @keyframes pulse { 50% { opacity: 0.4; } }
+        @keyframes spin { 0% { box-shadow: 0 0 6px; } 50% { box-shadow: 0 0 14px; } 100% { box-shadow: 0 0 6px; } }
+        .agent-card.busy { border-color: #d29922; }
+        .busy-label { font-size: 0.75em; color: #d29922; font-weight: 500; }
+        .agent-badge {
+            font-size: 0.7em; padding: 2px 8px; border-radius: 10px;
+            background: #21262d; color: #8b949e;
+        }
+        .agent-badge.api { background: #1a2332; color: #58a6ff; }
+        .agent-badge.opencode { background: #1a1520; color: #ff6b35; }
+        .agent-role select {
+            background: #0d1117; color: #c9d1d9; border: 1px solid #30363d;
+            border-radius: 4px; padding: 2px 6px; font-size: 0.8em; width: 100%;
+        }
+        .agent-actions { display: flex; gap: 6px; }
+        .btn {
+            flex: 1; padding: 7px; border: none; border-radius: 6px;
+            font-size: 0.8em; font-weight: 500; cursor: pointer; transition: all 0.15s;
+        }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-start { background: #238636; color: #fff; }
+        .btn-start:hover:not(:disabled) { background: #2ea043; }
+        .btn-stop { background: #da3633; color: #fff; }
+        .btn-stop:hover:not(:disabled) { background: #f85149; }
+        .strategy-card {
+            background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+            padding: 12px; cursor: pointer; transition: all 0.2s;
+        }
+        .strategy-card:hover { border-color: #58a6ff; background: #1a2332; }
+        .strategy-card h3 { font-size: 0.95em; color: #f0f6fc; margin-bottom: 3px; }
+        .strategy-card p { font-size: 0.8em; color: #8b949e; margin-bottom: 6px; }
+        .strategy-agents { display: flex; gap: 4px; flex-wrap: wrap; }
+        .strategy-pill {
+            font-size: 0.7em; padding: 2px 6px; border-radius: 10px;
+            background: #21262d; color: #c9d1d9;
+        }
+        .status-bar {
+            position: fixed; bottom: 0; left: 0; right: 0;
+            background: #161b22; border-top: 1px solid #21262d;
+            padding: 10px 16px; display: flex; justify-content: space-between;
+            align-items: center; font-size: 0.85em; z-index: 100;
+        }
+        .online-count { color: #3fb950; font-weight: 600; }
+        .status-bar a { color: #58a6ff; text-decoration: none; }
+        .toast {
+            position: fixed; top: 16px; right: 16px; padding: 12px 20px;
+            background: #1f6feb; color: #fff; border-radius: 8px;
+            font-size: 0.9em; opacity: 0; transition: opacity 0.3s; z-index: 200;
+        }
+        .toast.show { opacity: 1; }
+        .toast.error { background: #da3633; }
+        .failover-box {
+            background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+            padding: 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+        }
+        .failover-info { font-size: 0.85em; color: #8b949e; }
+        .failover-info strong { color: #c9d1d9; }
+        .toggle-switch { position: relative; width: 44px; height: 24px; cursor: pointer; flex-shrink: 0; }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: #484f58; border-radius: 12px; transition: 0.3s;
+        }
+        .toggle-slider::before {
+            content: ''; position: absolute; width: 18px; height: 18px;
+            left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: 0.3s;
+        }
+        .toggle-switch input:checked + .toggle-slider { background: #238636; }
+        .toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
+        .chain-list { font-size: 0.75em; color: #8b949e; margin-top: 6px; width: 100%; }
+        .chain-item { margin: 1px 0; }
+        .chain-role { color: #58a6ff; font-weight: 500; }
+        .oc-launcher {
+            background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 12px;
+        }
+        .oc-desc { font-size: 0.85em; color: #8b949e; margin-bottom: 10px; }
+        .provider-group { margin-bottom: 8px; }
+        .provider-group-name { font-size: 0.8em; margin-bottom: 3px; font-weight: 500; }
+        .provider-group-btns { display: flex; gap: 5px; flex-wrap: wrap; }
+        .provider-btn {
+            padding: 6px 12px; border: 1px solid #30363d; border-radius: 6px;
+            background: #0d1117; color: #c9d1d9; cursor: pointer; font-size: 0.8em;
+            transition: all 0.15s; white-space: nowrap;
+        }
+        .provider-btn:hover { border-color: #58a6ff; background: #161b22; }
+        .empty-msg { color: #484f58; font-size: 0.9em; padding: 20px; text-align: center; }
+        .rename-link { cursor: pointer; border-bottom: 1px dashed #484f58; }
+        .rename-link:hover { color: #58a6ff; border-color: #58a6ff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Agent Manager</h1>
+            <div style="display:flex;gap:8px;align-items:center">
+                <button class="nuke-btn" id="nuke-btn">Stop All + Reset</button>
+                <a href="/" class="back-link">Back to Chat</a>
+            </div>
+        </header>
+
+        <div class="section">
+            <div class="section-title">Project</div>
+            <select class="project-select" id="project-select"><option>Loading...</option></select>
+            <div class="project-info" id="project-info"></div>
+        </div>
+
+        <div class="section" id="section-running">
+            <div class="section-title">Running <span class="count active" id="running-count">0</span></div>
+            <div class="agent-grid" id="agents-running"></div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">OpenCode Launcher</div>
+            <div class="oc-launcher">
+                <div class="oc-desc">Click any model to spawn a new OpenCode instance (unlimited). Each gets full CLI: memory, files, MCP tools.</div>
+                <div id="oc-provider-grid"></div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Quick Start Strategies</div>
+            <div class="strategy-grid" id="strategies"></div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Auto-Failover</div>
+            <div class="failover-box" id="failover"></div>
+        </div>
+
+        <div class="section" id="section-available">
+            <div class="section-title">Available (not running) <span class="count" id="available-count">0</span></div>
+            <div class="agent-grid" id="agents-available"></div>
+        </div>
+    </div>
+
+    <div class="status-bar">
+        <span><span class="online-count" id="online-count">0</span> agents online</span>
+        <a href="/">Open Chat</a>
+    </div>
+    <div class="toast" id="toast"></div>
+
+    <script>
+    const TOKEN = window.__SESSION_TOKEN__ || '';
+    const ROLES = ['', 'Builder', 'Reviewer', 'Researcher', 'Architect', 'Critic',
+                   "Devil's Advocate", 'Planner', 'Tester', 'Documenter'];
+    const COLORS = {
+        claude:'#da7756', codex:'#10a37f', gemini:'#4285f4', kimi:'#1783ff',
+        qwen:'#8b5cf6', opencode:'#ff6b35', kilo:'#f7f677', minimax:'#2fe898', glm:'#00d4aa',
+        'qwen-api':'#9b6dff', 'qwen-coder':'#7c4dff', 'glm5-ds':'#00b894',
+        'kimi-api':'#00a8ff', 'minimax-ds':'#1de9b6'
+    };
+    const PROV_COLORS = {
+        'opencode':'#ff6b35','anthropic':'#da7756','openai':'#10a37f','google':'#4285f4',
+        'zai':'#00d4aa','zai-coding-plan':'#00d4aa','alibaba-coding-plan':'#8b5cf6',
+        'alibaba-coding-plan-cn':'#7c4dff','alibaba':'#8b5cf6','alibaba-cn':'#7c4dff',
+        'minimax':'#2fe898','moonshotai':'#1783ff','moonshotai-cn':'#1783ff','kimi-for-coding':'#00a8ff',
+    };
+
+    let state = {};
+    let ocModelsCache = null;
+
+    function toast(msg, err) {
+        const el = document.getElementById('toast');
+        el.textContent = msg;
+        el.className = 'toast show' + (err ? ' error' : '');
+        setTimeout(() => { el.className = 'toast'; }, 3000);
+    }
+
+    async function api(path, method, body) {
+        const opts = { method: method || 'GET' };
+        if (body) { opts.headers = {'Content-Type':'application/json'}; opts.body = JSON.stringify(body); }
+        const sep = path.includes('?') ? '&' : '?';
+        const res = await fetch(path + sep + 'token=' + TOKEN, opts);
+        return res.json();
+    }
+
+    async function loadAll() {
+        const [clis, projects, strategies, running, status, fo] = await Promise.all([
+            api('/api/manager/clis'), api('/api/manager/projects'),
+            api('/api/manager/strategies'), api('/api/manager/running'),
+            api('/api/status'), api('/api/manager/failover')
+        ]);
+        if (!ocModelsCache) { ocModelsCache = await api('/api/manager/opencode-models'); }
+        state = { clis, projects, strategies, running, status, failover: fo, ocModels: ocModelsCache };
+        render();
+    }
+
+    function render() {
+        renderProjects();
+        renderAgentsSplit();
+        renderOpenCodeLauncher();
+        renderStrategies();
+        renderFailover();
+        let c = 0;
+        for (const v of Object.values(state.status)) { if (v && v.available) c++; }
+        document.getElementById('online-count').textContent = c;
+    }
+
+    function renderProjects() {
+        const sel = document.getElementById('project-select');
+        const prev = sel.value;
+        while (sel.firstChild) sel.removeChild(sel.firstChild);
+        const h = document.createElement('option'); h.value = '/home/tango'; h.textContent = '~ (Home)'; sel.appendChild(h);
+        for (const p of state.projects) {
+            const o = document.createElement('option'); o.value = p.path; o.textContent = p.name + ' \u2014 ' + p.path; sel.appendChild(o);
+        }
+        if (prev) sel.value = prev;
+        const p = state.projects.find(x => x.path === sel.value);
+        document.getElementById('project-info').textContent = p ? p.markers.join(', ') : '';
+    }
+
+    function buildAgentCard(name, cli, isRunning) {
+        const info = state.status[name];
+        const isOnline = info && info.available;
+        const isBusy = info && info.busy;
+        const displayLabel = (info && info.label) || (cli && cli.label) || name;
+        const color = COLORS[name] || (info && info.color) || '#ff6b35';
+        const statusCls = isOnline ? (isBusy ? 'online busy' : 'online') : (isRunning ? 'starting' : 'offline');
+        const currentRole = (info && info.role) || '';
+        const agentType = (cli && cli.type) || 'terminal';
+        const isDynamic = cli && cli.dynamic;
+        const installed = cli ? cli.installed : true;
+
+        const card = document.createElement('div');
+        card.className = 'agent-card ' + statusCls + (!installed ? ' not-installed' : '');
+
+        // Header
+        const hdr = document.createElement('div'); hdr.className = 'agent-header';
+        const nd = document.createElement('div'); nd.className = 'agent-name';
+        const dotCls = isBusy ? 'agent-dot busy' : ('agent-dot ' + (isOnline ? 'online' : (isRunning ? 'starting' : 'offline')));
+        const dot = document.createElement('div'); dot.className = dotCls;
+        if (isOnline) { dot.style.background = color; dot.style.boxShadow = '0 0 6px ' + color; }
+        nd.appendChild(dot);
+
+        // Busy indicator
+        if (isBusy) {
+            const bl = document.createElement('span'); bl.className = 'busy-label';
+            bl.textContent = ' working...';
+            nd.appendChild(bl);
+        }
+
+        const lbl = document.createElement('span');
+        lbl.textContent = displayLabel;
+        if (isOnline) {
+            lbl.className = 'rename-link';
+            lbl.title = 'Click to rename';
+            lbl.addEventListener('click', () => renameAgent(name));
+        }
+        nd.appendChild(lbl);
+
+        if (displayLabel !== name) {
+            const sub = document.createElement('span'); sub.className = 'agent-sub';
+            sub.textContent = ' @' + name; nd.appendChild(sub);
+        }
+        hdr.appendChild(nd);
+
+        const badge = document.createElement('span');
+        badge.className = 'agent-badge' + (agentType === 'api' ? ' api' : '') + (isDynamic ? ' opencode' : '');
+        badge.textContent = isDynamic ? 'opencode' : agentType;
+        hdr.appendChild(badge);
+        card.appendChild(hdr);
+
+        // Role
+        const rd = document.createElement('div'); rd.className = 'agent-role';
+        const rs = document.createElement('select');
+        if (!isOnline) rs.disabled = true;
+        for (const r of ROLES) {
+            const o = document.createElement('option'); o.value = r; o.textContent = r || '(no role)';
+            if (r === currentRole) o.selected = true; rs.appendChild(o);
+        }
+        rs.addEventListener('change', function() { setRole(name, this.value); });
+        rd.appendChild(rs);
+        card.appendChild(rd);
+
+        // Actions
+        const acts = document.createElement('div'); acts.className = 'agent-actions';
+        if (!isRunning && !isOnline) {
+            const sb = document.createElement('button'); sb.className = 'btn btn-start';
+            sb.textContent = 'Start'; sb.disabled = !installed;
+            sb.addEventListener('click', () => startAgent(name));
+            acts.appendChild(sb);
+        } else {
+            if (isRunning && !isOnline) {
+                const wb = document.createElement('button'); wb.className = 'btn'; wb.style.background = '#d29922'; wb.style.color = '#fff';
+                wb.textContent = 'Starting...'; wb.disabled = true; acts.appendChild(wb);
+            }
+            const kb = document.createElement('button'); kb.className = 'btn btn-stop';
+            kb.textContent = 'Stop';
+            kb.addEventListener('click', () => stopAgent(name));
+            acts.appendChild(kb);
+        }
+        card.appendChild(acts);
+        return card;
+    }
+
+    function renderAgentsSplit() {
+        const runEl = document.getElementById('agents-running');
+        const availEl = document.getElementById('agents-available');
+        while (runEl.firstChild) runEl.removeChild(runEl.firstChild);
+        while (availEl.firstChild) availEl.removeChild(availEl.firstChild);
+
+        // Collect all agents: config + dynamic (from status)
+        const all = new Map();
+        for (const [n, c] of Object.entries(state.clis)) {
+            all.set(n, { type: c.type, installed: c.installed, label: c.label || n });
+        }
+        for (const [n, info] of Object.entries(state.status)) {
+            if (!all.has(n) && typeof info === 'object' && info !== null) {
+                all.set(n, { type: 'terminal', installed: true, label: info.label || n, dynamic: true });
+            }
+        }
+
+        let runCount = 0, availCount = 0;
+
+        for (const [name, cli] of all) {
+            const info = state.status[name];
+            const isOnline = info && info.available;
+            const isRunning = name in state.running;
+
+            if (isOnline || isRunning) {
+                runEl.appendChild(buildAgentCard(name, cli, isRunning));
+                runCount++;
+            } else {
+                availEl.appendChild(buildAgentCard(name, cli, false));
+                availCount++;
+            }
+        }
+
+        document.getElementById('running-count').textContent = runCount;
+        document.getElementById('available-count').textContent = availCount;
+
+        if (!runCount) {
+            const m = document.createElement('div'); m.className = 'empty-msg';
+            m.textContent = 'No agents running. Start one below or use a strategy.';
+            runEl.appendChild(m);
+        }
+    }
+
+    function renderOpenCodeLauncher() {
+        const el = document.getElementById('oc-provider-grid');
+        if (!el) return;
+        while (el.firstChild) el.removeChild(el.firstChild);
+        const models = state.ocModels || [];
+        if (!models.length) { el.textContent = 'Loading models...'; return; }
+
+        const groups = {};
+        for (const m of models) {
+            if (!groups[m.provider]) groups[m.provider] = [];
+            groups[m.provider].push(m);
+        }
+
+        for (const [provider, pModels] of Object.entries(groups)) {
+            const g = document.createElement('div'); g.className = 'provider-group';
+            const n = document.createElement('div'); n.className = 'provider-group-name';
+            n.style.color = PROV_COLORS[provider] || '#8b949e';
+            n.textContent = provider;
+            g.appendChild(n);
+            const btns = document.createElement('div'); btns.className = 'provider-group-btns';
+            for (const m of pModels) {
+                const b = document.createElement('button'); b.className = 'provider-btn';
+                b.textContent = m.model;
+                b.title = 'Start new OpenCode with ' + m.id;
+                b.addEventListener('click', () => launchOpenCode(m.id, m.model));
+                btns.appendChild(b);
+            }
+            g.appendChild(btns); el.appendChild(g);
+        }
+    }
+
+    async function launchOpenCode(modelId, modelName) {
+        const project = document.getElementById('project-select').value;
+        toast('Starting OpenCode [' + modelId + ']...');
+        const result = await api('/api/manager/start/opencode-launch', 'POST', { project: project, model: modelId });
+        if (result.error) { toast(result.error, true); return; }
+        toast('OpenCode (' + modelName + ') spawning...');
+        setTimeout(loadAll, 4000);
+        setTimeout(loadAll, 10000);
+    }
+
+    async function renameAgent(name) {
+        const current = (state.status[name] && state.status[name].label) || name;
+        const nl = prompt('Neuer Name fuer @' + name + ':', current);
+        if (!nl || nl === current) return;
+        await api('/api/label/' + name, 'POST', { label: nl });
+        toast('Renamed to ' + nl);
+        setTimeout(loadAll, 1000);
+    }
+
+    function renderStrategies() {
+        const el = document.getElementById('strategies');
+        while (el.firstChild) el.removeChild(el.firstChild);
+        for (const [key, s] of Object.entries(state.strategies)) {
+            const card = document.createElement('div'); card.className = 'strategy-card';
+            card.addEventListener('click', () => startStrategy(key));
+            const h3 = document.createElement('h3'); h3.textContent = s.name; card.appendChild(h3);
+            const desc = document.createElement('p'); desc.textContent = s.description; card.appendChild(desc);
+            const pills = document.createElement('div'); pills.className = 'strategy-agents';
+            for (const a of s.agents) {
+                const pill = document.createElement('span'); pill.className = 'strategy-pill';
+                pill.style.borderLeft = '3px solid ' + (COLORS[a] || '#8b949e');
+                pill.textContent = '@' + a + (s.roles[a] ? ' (' + s.roles[a] + ')' : '');
+                pills.appendChild(pill);
+            }
+            card.appendChild(pills); el.appendChild(card);
+        }
+    }
+
+    function renderFailover() {
+        const el = document.getElementById('failover');
+        while (el.firstChild) el.removeChild(el.firstChild);
+        const fo = state.failover || {};
+        const toggle = document.createElement('label'); toggle.className = 'toggle-switch';
+        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!fo.enabled;
+        cb.addEventListener('change', async () => { await api('/api/manager/failover/toggle', 'POST'); setTimeout(loadAll, 500); });
+        const sl = document.createElement('span'); sl.className = 'toggle-slider';
+        toggle.appendChild(cb); toggle.appendChild(sl); el.appendChild(toggle);
+        const info = document.createElement('div'); info.className = 'failover-info';
+        const st = document.createElement('strong'); st.textContent = fo.enabled ? 'Active' : 'Off';
+        info.appendChild(st);
+        info.appendChild(document.createTextNode(' \u2014 Auto-swap on rate limits'));
+        el.appendChild(info);
+        if (fo.chains) {
+            const cl = document.createElement('div'); cl.className = 'chain-list';
+            for (const [role, agents] of Object.entries(fo.chains)) {
+                if (role === '_default') continue;
+                const item = document.createElement('div'); item.className = 'chain-item';
+                const rs = document.createElement('span'); rs.className = 'chain-role'; rs.textContent = role + ': ';
+                item.appendChild(rs);
+                item.appendChild(document.createTextNode(agents.map(a => '@' + a).join(' \u2192 ')));
+                cl.appendChild(item);
+            }
+            el.appendChild(cl);
+        }
+    }
+
+    async function startAgent(name) {
+        const project = document.getElementById('project-select').value;
+        toast('Starting @' + name + '...');
+        const r = await api('/api/manager/start/' + name, 'POST', { project: project });
+        if (r.error) { toast(r.error, true); return; }
+        toast('@' + name + ' started');
+        setTimeout(loadAll, 3000); setTimeout(loadAll, 8000);
+    }
+
+    async function stopAgent(name) {
+        toast('Stopping @' + name + '...');
+        await api('/api/manager/stop/' + name, 'POST');
+        toast('@' + name + ' stopped');
+        setTimeout(loadAll, 2000);
+    }
+
+    async function startStrategy(key) {
+        const project = document.getElementById('project-select').value;
+        const s = state.strategies[key];
+        toast('Starting: ' + s.name + '...');
+        const r = await api('/api/manager/strategy/' + key, 'POST', { project: project });
+        if (r.roles) { setTimeout(() => { for (const [a, role] of Object.entries(r.roles)) setRole(a, role); }, 6000); }
+        toast(s.name + ' starting...'); setTimeout(loadAll, 5000); setTimeout(loadAll, 12000);
+    }
+
+    async function setRole(name, role) {
+        await api('/api/roles/' + name, 'POST', { role: role });
+        if (!state.status[name]) state.status[name] = {};
+        state.status[name].role = role;
+        renderAgentsSplit();
+    }
+
+    document.getElementById('nuke-btn').addEventListener('click', async () => {
+        if (!confirm('ALLES stoppen und neustarten? Killt alle Agents, tmux Sessions, leert Queues.')) return;
+        toast('Stopping everything...');
+        await api('/api/manager/nuke', 'POST');
+        toast('All stopped. Starte Agents neu im Manager.');
+        setTimeout(loadAll, 3000);
+    });
+
+    document.getElementById('project-select').addEventListener('change', () => {
+        const p = state.projects.find(x => x.path === document.getElementById('project-select').value);
+        document.getElementById('project-info').textContent = p ? p.markers.join(', ') : '';
+    });
+    loadAll();
+    setInterval(loadAll, 5000);
+    </script>
+</body>
+</html>
