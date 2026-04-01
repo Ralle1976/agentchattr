@@ -1,7 +1,5 @@
 #!/usr/bin/env sh
-# agentchattr — starts server (if not running) + MiniMax API agent wrapper
-# Usage: sh start_minimax.sh
-# Requires MINIMAX_API_KEY environment variable.
+# agentchattr - starts server (if not running) + OpenCode wrapper
 cd "$(dirname "$0")/.."
 
 PYTHON_BIN=""
@@ -38,16 +36,6 @@ is_server_running() {
     ss -tlnp 2>/dev/null | grep -q ':8300 '
 }
 
-# Auto-load API key from OpenCode auth if not set
-if [ -z "$MINIMAX_API_KEY" ] && [ -f "./load_api_keys.sh" ]; then
-    . ./load_api_keys.sh
-fi
-if [ -z "$MINIMAX_API_KEY" ]; then
-    echo "Error: MINIMAX_API_KEY not set and not found in OpenCode auth."
-    echo "Get an API key at https://platform.minimax.io"
-    exit 1
-fi
-
 ensure_venv
 
 if ! is_server_running; then
@@ -73,4 +61,4 @@ if ! is_server_running; then
     done
 fi
 
-.venv/bin/python wrapper_api.py minimax
+.venv/bin/python wrapper.py opencode

@@ -85,6 +85,95 @@ def main():
         )
         return HTMLResponse(injected, headers={"Cache-Control": "no-store"})
 
+    # --- Manager API endpoints ---
+    import manager
+    import failover
+    from fastapi import Request
+    from fastapi.responses import JSONResponse as _JSONResponse
+
+    # Start failover monitor
+    failover.monitor.set_token(session_token)
+    failover.monitor.start()
+
+    @app.get("/manager")
+    async def manager_page():
+        html = (static_dir / "manager.html").read_text("utf-8")
+        injected = html.replace(
+            "</head>",
+            f'<script>window.__SESSION_TOKEN__="{session_token}";</script>\n</head>',
+        )
+        return HTMLResponse(injected, headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/manager/clis")
+    async def manager_clis():
+        return _JSONResponse(manager.detect_clis())
+
+    @app.get("/api/manager/opencode-models")
+    async def manager_opencode_models():
+        return _JSONResponse(manager.get_opencode_models_cached())
+
+    @app.get("/api/manager/projects")
+    async def manager_projects():
+        return _JSONResponse(manager.detect_projects())
+
+    @app.get("/api/manager/strategies")
+    async def manager_strategies():
+        return _JSONResponse(manager.STRATEGIES)
+
+    @app.get("/api/manager/running")
+    async def manager_running():
+        return _JSONResponse(manager._get_running_agents())
+
+    @app.post("/api/manager/start/{agent_name}")
+    async def manager_start(agent_name: str, request: Request):
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+        result = manager.start_agent(agent_name, body.get("project"), body.get("model"))
+        return _JSONResponse(result)
+
+    @app.post("/api/manager/stop/{agent_name}")
+    async def manager_stop(agent_name: str):
+        result = manager.stop_agent(agent_name)
+        return _JSONResponse(result)
+
+    @app.post("/api/manager/strategy/{strategy_key}")
+    async def manager_strategy(strategy_key: str, request: Request):
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+        result = manager.start_strategy(strategy_key, body.get("project"))
+        return _JSONResponse(result)
+
+    @app.post("/api/manager/nuke")
+    async def manager_nuke():
+        result = manager.nuke_all()
+        return _JSONResponse(result)
+
+    @app.get("/api/manager/failover")
+    async def manager_failover_config():
+        return _JSONResponse({
+            "enabled": failover.monitor._running,
+            "check_interval": failover.monitor.check_interval,
+            "chains": failover.FAILOVER_CHAINS,
+            "cooldowns": {k: int(time.time() - v)
+                          for k, v in failover.monitor._cooldown.items()},
+        })
+
+    @app.post("/api/manager/failover/toggle")
+    async def manager_failover_toggle():
+        if failover.monitor._running:
+            failover.monitor.stop()
+            return _JSONResponse({"enabled": False})
+        else:
+            failover.monitor.set_token(session_token)
+            failover.monitor.start()
+            return _JSONResponse({"enabled": True})
+
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     # Capture the event loop for the store→WebSocket bridge

@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orchestrator v3</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh}
+        .wrap{max-width:900px;margin:0 auto;padding:12px 16px 80px}
+        header{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid #21262d;margin-bottom:16px}
+        h1{font-size:1.2em;color:#f0f6fc;display:flex;align-items:center;gap:8px}
+        .server-dot{width:10px;height:10px;border-radius:50%}
+        .server-dot.on{background:#3fb950;box-shadow:0 0 6px #3fb950}
+        .server-dot.off{background:#f85149}
+        .hdr-btns{display:flex;gap:6px}
+        .hdr-btns button,.hdr-btns a{font-size:0.8em;padding:4px 10px;border:1px solid #30363d;border-radius:6px;background:none;color:#c9d1d9;cursor:pointer;text-decoration:none}
+        .hdr-btns .danger{color:#da3633;border-color:#da3633}
+        .hdr-btns .danger:hover{background:#da3633;color:#fff}
+        .hdr-btns button:hover,.hdr-btns a:hover{background:#161b22}
+
+        .tabs{display:flex;gap:2px;margin-bottom:16px;border-bottom:2px solid #21262d}
+        .tab{padding:8px 16px;cursor:pointer;color:#8b949e;border-bottom:2px solid transparent;margin-bottom:-2px;font-size:0.9em}
+        .tab.active{color:#f0f6fc;border-color:#58a6ff}
+        .tab:hover{color:#c9d1d9}
+        .tab-content{display:none}.tab-content.active{display:block}
+
+        /* Planner */
+        .planner{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px}
+        .planner textarea{width:100%;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:10px;font-size:0.9em;resize:vertical;min-height:80px;font-family:inherit}
+        .planner textarea:focus{border-color:#58a6ff;outline:none}
+        .planner-row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center}
+        .plan-result{margin-top:12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px;font-size:0.85em;max-height:300px;overflow-y:auto;display:none}
+        .plan-task{padding:4px 0;border-bottom:1px solid #21262d}
+        .plan-task:last-child{border:none}
+        .plan-task .prio{color:#d29922;font-weight:600;margin-right:6px}
+
+        /* Swarm cards */
+        .swarm-card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px;margin-bottom:10px}
+        .swarm-card.running{border-color:#238636}
+        .swarm-card.starting{border-color:#d29922}
+        .swarm-card.error{border-color:#da3633}
+        .swarm-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+        .swarm-hdr h3{font-size:1em;color:#f0f6fc;display:flex;align-items:center;gap:6px}
+        .swarm-hdr .ch{font-size:0.8em;color:#58a6ff;font-weight:400}
+        .swarm-meta{font-size:0.8em;color:#8b949e;margin-bottom:8px}
+        .swarm-meta a{color:#58a6ff;text-decoration:none}
+        .agent-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:0.85em;border-top:1px solid #161b22}
+        .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+        .dot.running{background:#3fb950;box-shadow:0 0 4px #3fb950}
+        .dot.starting{background:#d29922;animation:pulse 1s infinite}
+        .dot.error,.dot.dead{background:#f85149}
+        .dot.stopped{background:#484f58}
+        @keyframes pulse{50%{opacity:0.4}}
+        .role-tag{color:#d29922;font-weight:500;width:70px;flex-shrink:0;font-size:0.85em}
+        .agent-name{flex:1}.agent-model{color:#8b949e;font-size:0.85em}
+        .err-msg{color:#f85149;font-size:0.8em;margin-top:4px}
+
+        /* Form elements */
+        select,input[type=text]{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:7px 10px;font-size:0.9em}
+        select:focus,input:focus{border-color:#58a6ff;outline:none}
+        .form-row{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+        .form-label{font-size:0.8em;color:#8b949e;margin-bottom:2px}
+        .btn{padding:7px 14px;border:none;border-radius:6px;font-size:0.85em;cursor:pointer;font-weight:500}
+        .btn:disabled{opacity:0.4;cursor:not-allowed}
+        .btn-green{background:#238636;color:#fff}.btn-green:hover:not(:disabled){background:#2ea043}
+        .btn-red{background:#da3633;color:#fff;font-size:0.8em;padding:4px 10px}.btn-red:hover{background:#f85149}
+        .btn-blue{background:#1f6feb;color:#fff}.btn-blue:hover:not(:disabled){background:#388bfd}
+        .pick{padding:4px 10px;border:1px solid #30363d;border-radius:6px;background:#0d1117;color:#c9d1d9;cursor:pointer;font-size:0.8em}
+        .pick:hover{border-color:#58a6ff}.pick.on{border-color:#3fb950;background:#0d2818;color:#3fb950}
+        .picks{display:flex;gap:4px;flex-wrap:wrap;margin:4px 0}
+        label.check{font-size:0.85em;display:flex;align-items:center;gap:6px;cursor:pointer}
+
+        .empty{color:#484f58;text-align:center;padding:24px;font-size:0.9em}
+        .bar{position:fixed;bottom:0;left:0;right:0;background:#161b22;border-top:1px solid #21262d;padding:8px 16px;font-size:0.85em;display:flex;justify-content:space-between;align-items:center}
+        .bar .on{color:#3fb950;font-weight:600}
+        .toast{position:fixed;top:12px;right:12px;padding:10px 16px;background:#1f6feb;color:#fff;border-radius:6px;font-size:0.85em;opacity:0;transition:opacity 0.3s;z-index:99}
+        .toast.show{opacity:1}.toast.err{background:#da3633}
+        .spin{display:inline-block;animation:spin2 1s linear infinite}
+        @keyframes spin2{to{transform:rotate(360deg)}}
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <header>
+        <h1><div class="server-dot" id="server-dot"></div> Orchestrator v3</h1>
+        <div class="hdr-btns">
+            <button id="restart-server">Restart Server</button>
+            <button class="danger" id="stop-all">Stop All</button>
+            <a href="http://localhost:8300" target="_blank">Chat UI</a>
+        </div>
+    </header>
+
+    <div class="tabs">
+        <div class="tab active" data-tab="planner">KI Planner</div>
+        <div class="tab" data-tab="manual">Manuell</div>
+        <div class="tab" data-tab="swarms">Swarms <span id="swarm-badge" style="color:#3fb950"></span></div>
+    </div>
+
+    <!-- Tab: KI Planner -->
+    <div class="tab-content active" id="tab-planner">
+        <div class="planner">
+            <div class="form-label">Projekt:</div>
+            <div class="form-row">
+                <select id="plan-project" style="flex:1"><option value="">-- Projekt waehlen --</option></select>
+            </div>
+            <div class="form-label" style="margin-top:8px">Was soll gemacht werden?</div>
+            <textarea id="plan-request" placeholder="z.B. Analysiere das Projekt und verbessere die Code-Qualitaet. Finde Sicherheitsluecken und fixe sie. Schreibe fehlende Tests."></textarea>
+            <div class="planner-row">
+                <select id="plan-model">
+                    <option value="zai-coding-plan/glm-5.1">Planner: GLM-5.1</option>
+                    <option value="alibaba-coding-plan/qwen3.5-plus">Planner: Qwen 3.5+</option>
+                </select>
+                <button class="btn btn-blue" id="plan-analyze">Analysieren</button>
+                <button class="btn btn-green" id="plan-launch" disabled>Swarm starten</button>
+            </div>
+            <div class="plan-result" id="plan-result"></div>
+        </div>
+    </div>
+
+    <!-- Tab: Manuell -->
+    <div class="tab-content" id="tab-manual">
+        <div class="planner">
+            <div class="form-row">
+                <select id="man-project" style="flex:1"><option value="">-- Projekt --</option></select>
+                <input type="text" id="man-name" placeholder="Swarm-Name" style="flex:1">
+            </div>
+            <div class="form-label">Orchestrator:</div>
+            <div class="form-row">
+                <select id="man-orch">
+                    <option value="zai-coding-plan/glm-5.1">GLM-5.1</option>
+                    <option value="alibaba-coding-plan/qwen3.5-plus">Qwen 3.5+</option>
+                    <option value="minimax/MiniMax-M2.7">MiniMax M2.7</option>
+                    <option value="alibaba-coding-plan/kimi-k2.5">Kimi K2.5</option>
+                </select>
+            </div>
+            <div class="form-label">Workers:</div>
+            <div class="picks" id="man-workers"></div>
+            <div class="form-row" style="margin-top:8px;align-items:center">
+                <label class="check"><input type="checkbox" id="man-claude"> + Claude (Max Plan)</label>
+                <div style="flex:1"></div>
+                <button class="btn btn-green" id="man-launch">Swarm starten</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab: Swarms -->
+    <div class="tab-content" id="tab-swarms">
+        <div id="swarms"></div>
+    </div>
+</div>
+
+<div class="bar">
+    <span><span class="on" id="agent-count">0</span> agents in <span id="swarm-count">0</span> swarms</span>
+    <span style="color:#484f58">Orchestrator v3 :8400</span>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const CHAT_BASE='http://'+location.hostname+':8300';
+const WORKER_OPTS=[
+    {id:'alibaba-coding-plan/qwen3-coder-next',label:'Qwen Coder'},
+    {id:'alibaba-coding-plan/qwen3.5-plus',label:'Qwen 3.5+'},
+    {id:'zai-coding-plan/glm-5.1',label:'GLM-5.1'},
+    {id:'zai-coding-plan/glm-5',label:'GLM-5'},
+    {id:'minimax/MiniMax-M2.7',label:'MiniMax M2.7'},
+    {id:'alibaba-coding-plan/kimi-k2.5',label:'Kimi K2.5'},
+    {id:'alibaba-coding-plan/MiniMax-M2.5',label:'MiniMax 2.5'},
+];
+let state={swarms:[],projects:[],serverUp:false};
+let selectedWorkers=[];
+let currentPlan=null;
+
+function toast(m,e){const t=document.getElementById('toast');t.textContent=m;t.className='toast show'+(e?' err':'');setTimeout(()=>t.className='toast',3000)}
+async function api(p,m,b,timeoutMs){
+    const o={method:m||'GET'};
+    if(b){o.headers={'Content-Type':'application/json'};o.body=JSON.stringify(b)}
+    if(timeoutMs){
+        const ctrl=new AbortController();
+        o.signal=ctrl.signal;
+        setTimeout(()=>ctrl.abort(),timeoutMs);
+    }
+    try{return(await fetch(p,o)).json()}
+    catch(e){return{error:String(e)}}
+}
+
+// Tabs
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('tab-'+t.dataset.tab).classList.add('active');
+}));
+
+async function refresh(){
+    const [swarms,projects,server]=await Promise.all([
+        api('/api/swarms'),api('/api/projects'),api('/api/server/status')
+    ]);
+    state.swarms=Array.isArray(swarms)?swarms:[];
+    state.projects=Array.isArray(projects)?projects:[];
+    state.serverUp=server&&server.running;
+    render();
+}
+
+function render(){
+    document.getElementById('server-dot').className='server-dot '+(state.serverUp?'on':'off');
+    renderProjects();
+    renderWorkerPicks();
+    renderSwarms();
+    let ac=0;
+    for(const s of state.swarms){ac+=(s.workers||[]).length;if(s.orchestrator)ac++}
+    document.getElementById('agent-count').textContent=ac;
+    document.getElementById('swarm-count').textContent=state.swarms.filter(s=>s.status!=='stopped').length;
+    document.getElementById('swarm-badge').textContent=state.swarms.length?'('+state.swarms.filter(s=>s.status!=='stopped').length+')':'';
+}
+
+function renderProjects(){
+    for(const selId of['plan-project','man-project']){
+        const sel=document.getElementById(selId);
+        const prev=sel.value;
+        while(sel.firstChild)sel.removeChild(sel.firstChild);
+        const def=document.createElement('option');def.value='';def.textContent='-- Projekt waehlen --';sel.appendChild(def);
+        for(const p of state.projects){
+            const o=document.createElement('option');o.value=p.path;o.textContent=p.name;sel.appendChild(o);
+        }
+        if(prev)sel.value=prev;
+    }
+}
+
+function renderWorkerPicks(){
+    const el=document.getElementById('man-workers');
+    while(el.firstChild)el.removeChild(el.firstChild);
+    for(const w of WORKER_OPTS){
+        const b=document.createElement('button');b.className='pick'+(selectedWorkers.includes(w.id)?' on':'');
+        b.textContent=w.label;
+        b.addEventListener('click',()=>{
+            if(selectedWorkers.includes(w.id))selectedWorkers=selectedWorkers.filter(x=>x!==w.id);
+            else selectedWorkers.push(w.id);
+            renderWorkerPicks();
+        });
+        el.appendChild(b);
+    }
+}
+
+function renderSwarms(){
+    const el=document.getElementById('swarms');
+    while(el.firstChild)el.removeChild(el.firstChild);
+    const active=state.swarms.filter(s=>s.status!=='stopped');
+    if(!active.length){
+        const e=document.createElement('div');e.className='empty';e.textContent='Keine Swarms aktiv.';
+        el.appendChild(e);return;
+    }
+    for(const s of active){
+        const card=document.createElement('div');card.className='swarm-card '+(s.status||'');
+
+        const hdr=document.createElement('div');hdr.className='swarm-hdr';
+        const h3=document.createElement('h3');h3.textContent=s.name+' ';
+        const ch=document.createElement('span');ch.className='ch';ch.textContent='#'+s.channel;h3.appendChild(ch);
+        hdr.appendChild(h3);
+        const stopBtn=document.createElement('button');stopBtn.className='btn-red';stopBtn.textContent='Stop';
+        stopBtn.style.cssText='border:none;border-radius:6px;cursor:pointer';
+        stopBtn.addEventListener('click',()=>stopSwarm(s.name));
+        hdr.appendChild(stopBtn);card.appendChild(hdr);
+
+        const meta=document.createElement('div');meta.className='swarm-meta';
+        meta.appendChild(document.createTextNode(s.project.split('/').pop()+' \u00B7 '));
+        const link=document.createElement('a');link.href=CHAT_BASE;link.textContent='Chat';link.target='_blank';
+        meta.appendChild(link);
+        meta.appendChild(document.createTextNode(' \u00B7 '+fmtTime(s.uptime)));
+        card.appendChild(meta);
+
+        if(s.error){const err=document.createElement('div');err.className='err-msg';err.textContent=s.error;card.appendChild(err)}
+
+        if(s.orchestrator){
+            const r=document.createElement('div');r.className='agent-row';
+            const d=document.createElement('div');d.className='dot '+(s.orchestrator.status||'stopped');r.appendChild(d);
+            const role=document.createElement('span');role.className='role-tag';role.textContent='Orch';r.appendChild(role);
+            const nm=document.createElement('span');nm.className='agent-name';
+            nm.textContent=(s.orchestrator.name?'@'+s.orchestrator.name+' ':'')+s.orchestrator.label;r.appendChild(nm);
+            card.appendChild(r);
+        }
+        for(const w of(s.workers||[])){
+            const r=document.createElement('div');r.className='agent-row';
+            const d=document.createElement('div');d.className='dot '+(w.status||'stopped');r.appendChild(d);
+            const role=document.createElement('span');role.className='role-tag';
+            role.textContent=w.role||'Worker';r.appendChild(role);
+            const nm=document.createElement('span');nm.className='agent-name';
+            nm.textContent=(w.name?'@'+w.name+' ':'')+w.label;r.appendChild(nm);
+            const mdl=document.createElement('span');mdl.className='agent-model';mdl.textContent=w.model.split('/').pop();r.appendChild(mdl);
+            card.appendChild(r);
+        }
+        el.appendChild(card);
+    }
+}
+
+function fmtTime(s){if(!s)return'0s';if(s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m';return Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m'}
+
+// KI Planner
+document.getElementById('plan-analyze').addEventListener('click',async()=>{
+    const proj=document.getElementById('plan-project').value;
+    const req=document.getElementById('plan-request').value.trim();
+    const model=document.getElementById('plan-model').value;
+    if(!proj){toast('Projekt waehlen!',true);return}
+    if(!req){toast('Beschreibe was gemacht werden soll!',true);return}
+
+    const btn=document.getElementById('plan-analyze');
+    btn.disabled=true;
+    let dots=0;
+    const timer=setInterval(()=>{dots=(dots+1)%4;btn.textContent='Analysiert'+'.'.repeat(dots+1)+' ('+(dots*10+10)+'s)'},10000);
+    btn.textContent='Analysiert... (kann bis zu 2 Min dauern)';
+    toast('KI analysiert das Projekt...');
+
+    const result=await api('/api/planner/analyze','POST',{project_path:proj,request:req,model:model},200000);
+    clearInterval(timer);
+    btn.disabled=false;btn.textContent='Analysieren';
+
+    if(result.error){toast('Fehler: '+result.error,true);return}
+
+    currentPlan={...result,project_path:proj,user_request:req};
+    const el=document.getElementById('plan-result');
+    el.style.display='block';
+    while(el.firstChild)el.removeChild(el.firstChild);
+
+    if(result.project_summary){
+        const s=document.createElement('div');s.style.marginBottom='8px';
+        const b=document.createElement('strong');b.textContent='Zusammenfassung: ';s.appendChild(b);
+        s.appendChild(document.createTextNode(result.project_summary));el.appendChild(s);
+    }
+    // Role → Model mapping
+    if(result.roles && Object.keys(result.roles).length){
+        const rdiv=document.createElement('div');rdiv.style.marginBottom='8px';rdiv.style.fontSize='0.85em';
+        const rb=document.createElement('strong');rb.textContent='Rollen: ';rdiv.appendChild(rb);
+        const roleParts=[];
+        for(const [rn,ri] of Object.entries(result.roles)){
+            const model=ri.model?ri.model.split('/').pop():'?';
+            roleParts.push(rn+' \u2192 '+model);
+        }
+        rdiv.appendChild(document.createTextNode(roleParts.join(' \u00B7 ')));
+        el.appendChild(rdiv);
+    }
+    if(result.tasks){
+        for(const t of result.tasks){
+            const d=document.createElement('div');d.className='plan-task';
+            const p=document.createElement('span');p.className='prio';p.textContent='#'+t.priority;d.appendChild(p);
+            if(t.role){
+                const rb=document.createElement('span');
+                rb.style.cssText='background:#1f3a1f;color:#3fb950;padding:1px 6px;border-radius:4px;font-size:0.8em;margin-right:6px';
+                rb.textContent=t.role;
+                d.appendChild(rb);
+            }
+            const b=document.createElement('strong');b.textContent=t.title+' ';d.appendChild(b);
+            d.appendChild(document.createTextNode(t.description));el.appendChild(d);
+        }
+    }
+    document.getElementById('plan-launch').disabled=false;
+    toast('Analyse fertig: '+((result.tasks||[]).length)+' Tasks gefunden');
+});
+
+document.getElementById('plan-launch').addEventListener('click',async()=>{
+    if(!currentPlan)return;
+    const proj=currentPlan.project_path;
+    const projName=state.projects.find(p=>p.path===proj);
+    const name=projName?projName.name:'swarm';
+
+    toast('Starte Swarm "'+name+'"...');
+    const r=await api('/api/swarms/from-plan','POST',{
+        name:name,
+        project_path:proj,
+        orchestrator_model:document.getElementById('plan-model').value,
+        plan:{
+            tasks:currentPlan.tasks||[],
+            roles:currentPlan.roles||{},
+            initial_orchestrator_prompt:currentPlan.initial_orchestrator_prompt||currentPlan.user_request,
+        },
+    });
+    if(r.error){toast(r.error,true);return}
+    toast('Swarm "'+name+'" startet in #'+r.channel);
+    document.querySelectorAll('.tab')[2].click(); // Switch to swarms tab
+    currentPlan=null;
+    document.getElementById('plan-launch').disabled=true;
+    setTimeout(refresh,3000);setTimeout(refresh,10000);setTimeout(refresh,30000);setTimeout(refresh,60000);
+});
+
+// Manual launch
+document.getElementById('man-launch').addEventListener('click',async()=>{
+    const proj=document.getElementById('man-project').value;
+    let name=document.getElementById('man-name').value.trim();
+    const orch=document.getElementById('man-orch').value;
+    const claude=document.getElementById('man-claude').checked;
+    if(!proj){toast('Projekt waehlen!',true);return}
+    if(!name){const p=state.projects.find(x=>x.path===proj);name=p?p.name:'swarm'}
+    if(!selectedWorkers.length&&!claude){toast('Mindestens einen Worker!',true);return}
+
+    toast('Starte Swarm "'+name+'"...');
+    const r=await api('/api/swarms','POST',{
+        name:name,project_path:proj,orchestrator_model:orch,
+        worker_models:selectedWorkers,include_claude:claude,
+    });
+    if(r.error){toast(r.error,true);return}
+    toast('Swarm "'+name+'" startet in #'+r.channel);
+    document.querySelectorAll('.tab')[2].click();
+    setTimeout(refresh,3000);setTimeout(refresh,10000);setTimeout(refresh,30000);setTimeout(refresh,60000);
+});
+
+async function stopSwarm(name){toast('Stoppe "'+name+'"...');await api('/api/swarms/'+encodeURIComponent(name)+'/stop','POST');toast('Gestoppt');setTimeout(refresh,2000)}
+
+document.getElementById('stop-all').addEventListener('click',async()=>{
+    if(!confirm('ALLES stoppen?'))return;
+    toast('Stoppe alles...');await api('/api/stop-all','POST');toast('Gestoppt');setTimeout(refresh,2000);
+});
+document.getElementById('restart-server').addEventListener('click',async()=>{
+    toast('Server neustart...');await api('/api/server/restart','POST');toast('Server neugestartet');setTimeout(refresh,3000);
+});
+
+refresh();setInterval(refresh,5000);
+</script>
+</body>
+</html>

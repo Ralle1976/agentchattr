@@ -1,6 +1,6 @@
 [server]
 port = 8300
-host = "127.0.0.1"
+host = "0.0.0.0"
 data_dir = "./data"
 
 # Add agents here. Each gets a status pill, @mention routing, and color.
@@ -9,19 +9,19 @@ data_dir = "./data"
 
 [agents.claude]
 command = "claude"
-cwd = ".."
+cwd = "/home/tango/qr-info-portal"
 color = "#da7756"
 label = "Claude"
 
 [agents.codex]
 command = "codex"
-cwd = ".."
+cwd = "/home/tango/qr-info-portal"
 color = "#10a37f"
 label = "Codex"
 
 [agents.gemini]
 command = "gemini"
-cwd = ".."
+cwd = "/home/tango/qr-info-portal"
 color = "#4285f4"
 label = "Gemini"
 
@@ -47,6 +47,12 @@ cwd = ".."
 color = "#f7f677"
 label = "Kilo"
 
+[agents.opencode]
+command = "opencode"
+cwd = ".."
+color = "#ff6b35"
+label = "OpenCode"
+
 [agents.minimax]
 type = "api"
 base_url = "https://api.minimax.io/v1"
@@ -59,7 +65,7 @@ temperature = 1.0
 [routing]
 # "none" = only route on explicit @mention. "all" = route to all agents by default.
 default = "none"
-max_agent_hops = 4
+max_agent_hops = 9999
 
 [mcp]
 http_port = 8200

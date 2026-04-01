@@ -172,10 +172,24 @@ def _install_security_middleware(token: str, cfg: dict):
     import app as _self
     _self.session_token = token
     port = cfg.get("server", {}).get("port", 8300)
+    host = cfg.get("server", {}).get("host", "127.0.0.1")
     allowed_origins = {
         f"http://127.0.0.1:{port}",
         f"http://localhost:{port}",
     }
+    # If binding to 0.0.0.0, allow all LAN origins
+    if host == "0.0.0.0":
+        import socket
+        try:
+            lan_ip = socket.gethostbyname(socket.gethostname())
+        except Exception:
+            lan_ip = ""
+        if lan_ip:
+            allowed_origins.add(f"http://{lan_ip}:{port}")
+        # Also allow common private ranges via permissive check
+        allowed_origins.add("null")  # for direct file access
+        # We'll relax origin check for 0.0.0.0 binding since token is required anyway
+        allowed_origins = None  # disable origin check, rely on token
 
     class SecurityMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
@@ -184,7 +198,7 @@ def _install_security_middleware(token: str, cfg: dict):
             # Static assets, index page, and uploaded images are public.
             # The index page injects the token client-side via same-origin script.
             # Uploads use random filenames and have path-traversal protection.
-            if path == "/" or path.startswith(("/static/", "/uploads/", "/api/roles")):
+            if path in ("/", "/manager", "/favicon.ico") or path.startswith(("/static/", "/uploads/", "/api/roles")):
                 return await call_next(request)
 
             # Agent registration/heartbeat: loopback only (no remote agent minting).
@@ -199,7 +213,7 @@ def _install_security_middleware(token: str, cfg: dict):
 
             # --- Origin check (blocks cross-origin / DNS-rebinding attacks) ---
             origin = request.headers.get("origin")
-            if origin and origin not in allowed_origins:
+            if allowed_origins is not None and origin and origin not in allowed_origins:
                 return JSONResponse(
                     {"error": "forbidden: origin not allowed"},
                     status_code=403,
@@ -1532,6 +1546,31 @@ async def api_send(request: Request):
     return JSONResponse(msg)
 
 
+@app.post("/api/inject")
+async def api_inject(request: Request):
+    """Inject a message as any sender (used by swarm orchestrator).
+
+    Authenticated via session token. Allows the swarm system to post
+    messages on behalf of agents that haven't registered with Bearer tokens.
+    """
+    req_token = (
+        request.headers.get("x-session-token")
+        or request.query_params.get("token")
+    )
+    if req_token != session_token:
+        return JSONResponse({"error": "invalid session token"}, status_code=403)
+
+    body = await request.json()
+    sender = (body.get("sender") or "system").strip()
+    text = body.get("text", "").strip()
+    if not text:
+        return JSONResponse({"error": "text is required"}, status_code=400)
+    channel = body.get("channel", "general")
+
+    msg = store.add(sender, text, channel=channel)
+    return JSONResponse(msg)
+
+
 @app.get("/api/status")
 async def get_status():
     status = agents.get_status()
@@ -1542,6 +1581,56 @@ async def get_status():
 @app.get("/api/settings")
 async def get_settings():
     return room_settings
+
+
+@app.post("/api/channels")
+async def create_channel(request: Request):
+    """Create a channel programmatically (used by orchestrator).
+
+    Body: {"name": "channel-name", "token": "..."}
+    """
+    body = await request.json()
+    name = (body.get("name") or "").strip().lower()
+
+    # Token check
+    req_token = body.get("token", "")
+    if req_token != session_token:
+        return JSONResponse({"error": "invalid token"}, status_code=403)
+
+    if not name or not _CHANNEL_NAME_RE.match(name):
+        return JSONResponse({"error": "invalid channel name"}, status_code=400)
+    if name in room_settings["channels"]:
+        return JSONResponse({"exists": True, "name": name})
+    if len(room_settings["channels"]) >= MAX_CHANNELS:
+        return JSONResponse({"error": "max channels reached"}, status_code=400)
+
+    room_settings["channels"].append(name)
+    _save_settings()
+    await broadcast_settings()
+    return JSONResponse({"created": True, "name": name})
+
+
+@app.delete("/api/channels/{name}")
+async def delete_channel(name: str, request: Request):
+    """Delete a channel programmatically (used by orchestrator cleanup).
+
+    Query param: token=<session_token>
+    """
+    req_token = request.query_params.get("token", "")
+    if req_token != session_token:
+        return JSONResponse({"error": "invalid token"}, status_code=403)
+
+    name = name.strip().lower()
+    if name == "general":
+        return JSONResponse({"error": "cannot delete #general"}, status_code=400)
+    if name not in room_settings["channels"]:
+        return JSONResponse({"error": "channel not found"}, status_code=404)
+
+    room_settings["channels"].remove(name)
+    store.delete_channel(name)
+    _save_settings()
+    await broadcast_settings()
+    return JSONResponse({"deleted": True, "name": name})
 
 
 @app.delete("/api/hat/{agent_name}")

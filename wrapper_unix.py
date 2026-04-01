@@ -138,17 +138,19 @@ def run_agent(
             )
 
             # Create tmux session running the agent CLI
+            # Remove TMUX env var to allow nesting (wrapper may run inside tmux)
+            nest_env = {k: v for k, v in env.items() if k != "TMUX"}
             result = subprocess.run(
                 ["tmux", "new-session", "-d", "-s", session_name,
                  "-c", abs_cwd, agent_cmd],
-                env=env,
+                env=nest_env,
             )
             if result.returncode != 0:
                 print(f"  Error: failed to create tmux session (exit {result.returncode})")
                 break
 
             # Attach — blocks until agent exits or user detaches (Ctrl+B, D)
-            subprocess.run(["tmux", "attach-session", "-t", session_name])
+            subprocess.run(["tmux", "attach-session", "-t", session_name], env=nest_env)
 
             # Check: did the agent exit, or did the user just detach?
             if _session_exists(session_name):

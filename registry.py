@@ -125,7 +125,10 @@ class RuntimeRegistry:
                     del self._instances[base]
                     slot1.name = new_s1_name
                     base_cfg = self._bases[base]
-                    slot1.label = f"{base_cfg.get('label', base.capitalize())} 1"
+                    # Keep custom label (e.g. "Claude Sonnet 4.6"), only auto-number if generic
+                    default_label = base_cfg.get('label', base.capitalize())
+                    if not slot1.label or slot1.label == default_label:
+                        slot1.label = f"{default_label} 1"
                     # Color stays the same (slot 1 = base color)
                     self._instances[new_s1_name] = slot1
                     self._renames[base] = new_s1_name
