@@ -220,18 +220,24 @@ class SwarmManager:
 
         kickoff_msg = f"{prompt}\n\nSTART: {initial_task}"
 
-        # Post kickoff message to chat channel so the orchestrator can read it.
-        # The wrapper's handle_trigger() reads chat messages, NOT the queue data.
-        # The queue file only serves as a wake-up signal.
+        # Post kickoff to chat — use a generic message without @mentions.
+        # The full prompt with @mentions goes to the orchestrator's queue only.
+        # This prevents the server's @mention routing from triggering workers.
+        chat_summary = (
+            f"Swarm '{config.name}' gestartet. "
+            f"{len(registered_workers)} Worker mit Rollen: "
+            + ", ".join(config.roles.keys())
+            + f". {len(config.tasks)} Tasks. Orchestrator koordiniert."
+        )
         try:
             self.bridge.send_message(
-                sender="orchestrator-system",
-                text=kickoff_msg,
+                sender="system",
+                text=chat_summary,
                 channel=config.channel,
             )
-            logger.info("Kickoff posted to #%s chat", config.channel)
+            logger.info("Kickoff summary posted to #%s chat", config.channel)
         except Exception as e:
-            logger.warning("Failed to post kickoff to chat: %s (falling back to queue-only)", e)
+            logger.warning("Failed to post kickoff to chat: %s", e)
 
         # Also write to queue file as a trigger signal
         queue_file = self.pool._root / "data" / f"{orch.registered_name}_queue.jsonl"

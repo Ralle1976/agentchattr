@@ -213,17 +213,31 @@ def main():
         parts.append("Respond to the conversation above. Take action if needed.")
         return "\n".join(parts)
 
+    def is_mentioned(chat_msgs, my_name):
+        """Check if this agent is @mentioned in recent chat messages."""
+        for msg in chat_msgs:
+            text = msg.get("text", "")
+            if f"@{my_name}" in text:
+                return True
+        return False
+
     # Handle trigger
     def handle_trigger(channel="general", override_prompt=None):
         my_name = get_name()
         set_working(True)
         try:
             if override_prompt:
-                # Direct prompt from queue (e.g. swarm kickoff)
+                # Direct prompt from queue (e.g. swarm kickoff) — always execute
                 prompt = override_prompt
             else:
                 chat_msgs = read_messages(channel=channel, limit=15)
                 if not chat_msgs:
+                    return
+                # @mention filter: only respond if this agent is @mentioned
+                # Exception: orchestrator agents (label starts with "Orchestrator")
+                # respond to all messages to coordinate the swarm.
+                is_orchestrator = label.startswith("Orchestrator")
+                if not is_orchestrator and not is_mentioned(chat_msgs, my_name):
                     return
                 prompt = build_prompt(chat_msgs, channel)
             print(f"  [{channel}] Calling opencode run -m {model}...")
