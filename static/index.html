@@ -114,6 +114,26 @@
             </div>
             <div class="settings-divider"></div>
             <div class="settings-field">
+                <label>API Keys</label>
+                <div id="api-keys-list" class="api-keys-grid">
+                    <div class="api-key-loading">Loading...</div>
+                </div>
+                <div class="api-key-add-row">
+                    <select id="api-key-provider">
+                        <option value="">Select provider...</option>
+                        <option value="minimax">MiniMax</option>
+                        <option value="zai-coding-plan">Z.ai (GLM)</option>
+                        <option value="alibaba-coding-plan">DashScope</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                        <option value="google">Google</option>
+                    </select>
+                    <input type="password" id="api-key-input" placeholder="sk-..." autocomplete="off">
+                    <button onclick="saveApiKey()" title="Save key">Save</button>
+                </div>
+            </div>
+            <div class="settings-divider"></div>
+            <div class="settings-field">
                 <label>Project History</label>
                 <div class="settings-history-btns">
                     <button class="settings-btn" onclick="exportHistory()">Export History</button>

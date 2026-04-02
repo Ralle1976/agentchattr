@@ -2117,6 +2117,43 @@ async def set_agent_role(agent_name: str, request: Request):
     return JSONResponse({"ok": True, "role": role})
 
 
+# --- API Keys ---
+
+@app.get("/api/api-keys")
+async def get_api_keys():
+    """List all configured API keys (masked)."""
+    import api_key_manager
+    keys = api_key_manager.list_keys()
+    providers = api_key_manager.detect_providers_from_config(config)
+    return JSONResponse({"keys": keys, "providers_from_config": providers})
+
+
+@app.post("/api/api-keys")
+async def save_api_key(request: Request):
+    """Save an API key for a provider."""
+    import api_key_manager
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+    provider = (body.get("provider") or "").strip()
+    key = (body.get("key") or "").strip()
+    result = api_key_manager.save_key(provider, key)
+    if "error" in result:
+        return JSONResponse(result, status_code=400)
+    return JSONResponse(result)
+
+
+@app.delete("/api/api-keys/{provider}")
+async def delete_api_key(provider: str):
+    """Delete an API key for a provider."""
+    import api_key_manager
+    result = api_key_manager.delete_key(provider)
+    if "error" in result:
+        return JSONResponse(result, status_code=400)
+    return JSONResponse(result)
+
+
 # --- Rules API ---
 
 @app.get("/api/rules")

@@ -1783,6 +1783,7 @@ function toggleSettings() {
     document.getElementById('settings-toggle').classList.toggle('active', !bar.classList.contains('hidden'));
     if (!bar.classList.contains('hidden')) {
         document.getElementById('setting-username').focus();
+        loadApiKeys();
     }
 }
 
@@ -1849,6 +1850,117 @@ function setupSettingsKeys() {
                 toggleSettings();
             }
         });
+    }
+}
+
+// --- API Key Management ---
+
+async function loadApiKeys() {
+    const list = document.getElementById('api-keys-list');
+    if (!list) return;
+    try {
+        const resp = await fetch('/api/api-keys?token=' + SESSION_TOKEN);
+        if (!resp.ok) { list.textContent = 'Failed to load'; return; }
+        const data = await resp.json();
+        const keys = data.keys || [];
+        const configProviders = data.providers_from_config || [];
+
+        list.textContent = '';
+        if (keys.length === 0 && configProviders.length === 0) {
+            list.textContent = 'No API keys configured';
+            return;
+        }
+
+        const allProviders = new Map();
+        for (const k of keys) allProviders.set(k.provider, k);
+        for (const p of configProviders) {
+            if (!allProviders.has(p.env_var)) {
+                allProviders.set(p.env_var, {
+                    provider: p.env_var,
+                    masked: '',
+                    has_key: p.has_key,
+                    source: p.source || 'config',
+                    env_var: p.env_var,
+                    agents: p.agents,
+                });
+            }
+        }
+
+        for (const [name, info] of allProviders) {
+            const row = document.createElement('div');
+            row.className = 'api-key-row';
+
+            const status = document.createElement('span');
+            status.className = 'api-key-status ' + (info.has_key ? 'has-key' : 'missing');
+            row.appendChild(status);
+
+            const prov = document.createElement('span');
+            prov.className = 'api-key-provider';
+            prov.textContent = info.provider || name;
+            if (info.agents && info.agents.length) {
+                prov.textContent += ' (' + info.agents.join(', ') + ')';
+            }
+            row.appendChild(prov);
+
+            const masked = document.createElement('span');
+            masked.className = 'api-key-masked';
+            masked.textContent = info.masked || (info.has_key ? '****...????' : 'not set');
+            row.appendChild(masked);
+
+            if (info.source) {
+                const src = document.createElement('span');
+                src.className = 'api-key-source';
+                src.textContent = info.source;
+                row.appendChild(src);
+            }
+
+            if (info.has_key) {
+                const del = document.createElement('button');
+                del.textContent = '\u00d7';
+                del.title = 'Delete key';
+                del.addEventListener('click', function() { deleteApiKey(info.provider || name); });
+                row.appendChild(del);
+            }
+
+            list.appendChild(row);
+        }
+    } catch (e) {
+        list.textContent = 'Error loading keys';
+    }
+}
+
+async function saveApiKey() {
+    const providerEl = document.getElementById('api-key-provider');
+    const keyEl = document.getElementById('api-key-input');
+    const provider = providerEl.value;
+    const key = keyEl.value.trim();
+    if (!provider) { showToast('Select a provider', 'error'); return; }
+    if (!key || key.length < 8) { showToast('Enter a valid API key (min 8 chars)', 'error'); return; }
+
+    try {
+        const resp = await fetch('/api/api-keys?token=' + SESSION_TOKEN, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider: provider, key: key }),
+        });
+        const data = await resp.json();
+        if (data.error) { showToast(data.error, 'error'); return; }
+        keyEl.value = '';
+        showToast('Key saved for ' + provider, 'success');
+        await loadApiKeys();
+    } catch (e) {
+        showToast('Failed to save key', 'error');
+    }
+}
+
+async function deleteApiKey(provider) {
+    if (!confirm('Delete API key for ' + provider + '?')) return;
+    try {
+        await fetch('/api/api-keys/' + encodeURIComponent(provider) + '?token=' + SESSION_TOKEN, { method: 'DELETE' });
+        showToast('Key deleted for ' + provider, 'success');
+        await loadApiKeys();
+    } catch (e) {
+        showToast('Failed to delete key', 'error');
     }
 }
 
